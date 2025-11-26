@@ -1,60 +1,74 @@
 import json
 import os
+import io
+import base64
 import urllib.request
-import unicodedata
-from typing import Dict, List, Tuple
+import pandas as pd
+import matplotlib.pyplot as plt
+from typing import Dict, Any
 
-from ..common import write_json, load_csv_rows
-from .sector_geo_analytics import (
-    compute_sector_ubicacion_analytics,
-)
-
-
-# URLs GeoJSON
 COLOMBIA_DEPARTAMENTOS_URL = (
     "https://raw.githubusercontent.com/johnguerra/colombia-geojson/master/colombia.json"
 )
+
 WORLD_COUNTRIES_URL = (
     "https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json"
 )
-# src/analytics_modules/sector_geo/graph_generator.py
-import pandas as pd
-from typing import Dict, Any, List
 
 
 class GraphGenerator:
+
     def __init__(self, df_transacciones: pd.DataFrame):
-        """
-        df_transacciones debe tener:
-        ['id','empresa','nit','ciiu','actividad','departamento','monto','riesgo']
-        """
         self.df = df_transacciones
-        self.alto = df_transacciones[df_transacciones["riesgo"].str.upper() == "ALTO"]
+        self.alto = df_transacciones[df_transacciones["riesgo"] == "ALTO"]
 
-    # ---------------------------------------------------------
-    # 1. Dataset para Doughnut CIIU
-    # ---------------------------------------------------------
-    def get_donut_ciiu(self) -> Dict[str, Any]:
+    # -----------------------------------------
+    # 1. DATASET para el JSON
+    # -----------------------------------------
+    def get_donut_dataset(self) -> Dict[str, Any]:
         group = self.alto.groupby("actividad")["monto"].sum()
-
         return {
-            "labels": group.index.tolist(),
-            "values": group.values.tolist()
+            "labels": list(group.index),
+            "values": list(group.values)
         }
 
-    # ---------------------------------------------------------
-    # 2. Tabla detallada (para DataTables)
-    # ---------------------------------------------------------
-    def get_tabla_detalle(self) -> List[Dict[str, Any]]:
-        return self.alto.to_dict(orient="records")
+    # -----------------------------------------
+    # 2. Gráfico en Base64
+    # -----------------------------------------
+    def get_donut_base64(self) -> str:
+        dataset = self.get_donut_dataset()
 
-    # ---------------------------------------------------------
-    # 3. Resumen por CIIU
-    # ---------------------------------------------------------
-    def resumen_por_ciiu(self) -> List[Dict[str, Any]]:
-        group = (
-            self.alto.groupby(["ciiu", "actividad"])["monto"]
-            .sum()
-            .reset_index()
+        plt.figure(figsize=(4, 4))
+        plt.pie(
+            dataset["values"],
+            labels=dataset["labels"],
+            autopct='%1.1f%%'
         )
-        return group.to_dict(orient="records")
+
+        buffer = io.BytesIO()
+        plt.savefig(buffer, format="png", bbox_inches="tight")
+        plt.close()
+        buffer.seek(0)
+
+        base64_data = base64.b64encode(buffer.read()).decode("utf-8")
+        return f"data:image/png;base64,{base64_data}"
+
+    # -----------------------------------------
+    # 3. Cargar GeoJSON desde las URLs
+    # -----------------------------------------
+    def load_geojson(self, url: str) -> Dict[str, Any]:
+        with urllib.request.urlopen(url) as response:
+            return json.loads(response.read().decode())
+
+    # -----------------------------------------
+    # 4. Paquete completo para el JSON final
+    # -----------------------------------------
+    def build_sector_geo_payload(self) -> Dict[str, Any]:
+        return {
+            "dataset": self.get_donut_dataset(),
+            "grafico_base64": self.get_donut_base64(),
+            "mapas": {
+                "colombia_departamentos": self.load_geojson(COLOMBIA_DEPARTAMENTOS_URL),
+                "world_countries": self.load_geojson(WORLD_COUNTRIES_URL)
+            }
+        }

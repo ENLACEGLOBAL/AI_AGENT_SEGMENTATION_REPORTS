@@ -1,5 +1,6 @@
 # src/analytics_modules/commons.py
-
+import json
+import os
 from datetime import datetime
 from decimal import Decimal
 
@@ -34,3 +35,13 @@ def merge_dicts(a: dict, b: dict) -> dict:
         if k not in result:
             result[k] = v
     return result
+
+
+
+def save_json(path: str, data: dict):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+    return path

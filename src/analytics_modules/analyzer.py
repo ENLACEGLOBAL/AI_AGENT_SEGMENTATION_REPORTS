@@ -1,54 +1,56 @@
 # src/analytics_modules/analyzer.py
 from datetime import date
 from sqlalchemy.orm import Session
+
 from src.db.base import SessionLocal
 from src.models.clientes import Cliente
 from src.models.proveedores import Proveedor
 
-def analizar_sector_ubicacion(
-    id_empresa: int,
-    tipo_contraparte: str | None = None,     # "cliente", "proveedor" o None
-    fecha_inicio: date | None = None,
-    fecha_fin: date | None = None
-):
-    db: Session = SessionLocal()
 
-    # --------------------------------------
-    # FILTRAR CLIENTES
-    # --------------------------------------
-    query_clientes = db.query(Cliente).filter(Cliente.id_empresa == id_empresa)
+class Analyzer:
 
-    if tipo_contraparte in ("cliente", None):
+    def __init__(self):
+        self.db: Session = SessionLocal()
+
+    # ---------------------------------------------------------
+    # Utilidad privada: filtrar registros por empresa + fechas
+    # ---------------------------------------------------------
+    def _filtrar(self, modelo, id_empresa: int, fecha_inicio, fecha_fin):
+        query = self.db.query(modelo).filter(modelo.id_empresa == id_empresa)
+
         if fecha_inicio:
-            query_clientes = query_clientes.filter(Cliente.fecha_transaccion >= fecha_inicio)
+            query = query.filter(modelo.fecha_transaccion >= fecha_inicio)
         if fecha_fin:
-            query_clientes = query_clientes.filter(Cliente.fecha_transaccion <= fecha_fin)
+            query = query.filter(modelo.fecha_transaccion <= fecha_fin)
 
-        clientes = query_clientes.all()
-    else:
+        return query.all()
+
+    # ---------------------------------------------------------
+    # Método principal: ANALIZADOR UNIVERSAL
+    # ---------------------------------------------------------
+    def analizar(self, id_empresa: int,
+                 tipo_contraparte: str | None = None,
+                 fecha_inicio: date | None = None,
+                 fecha_fin: date | None = None):
+
         clientes = []
-
-    # --------------------------------------
-    # FILTRAR PROVEEDORES
-    # --------------------------------------
-    query_proveedores = db.query(Proveedor).filter(Proveedor.id_empresa == id_empresa)
-
-    if tipo_contraparte in ("proveedor", None):
-        if fecha_inicio:
-            query_proveedores = query_proveedores.filter(Proveedor.fecha_transaccion >= fecha_inicio)
-        if fecha_fin:
-            query_proveedores = query_proveedores.filter(Proveedor.fecha_transaccion <= fecha_fin)
-
-        proveedores = query_proveedores.all()
-    else:
         proveedores = []
 
-    # --------------------------------------
-    # RESULTADO ANALÍTICO
-    # --------------------------------------
-    return {
-        "empresa_id": id_empresa,
-        "total_clientes": len(clientes),
-        "total_proveedores": len(proveedores),
-        "total_registros_filtrados": len(clientes) + len(proveedores),
-    }
+        if tipo_contraparte in ("cliente", None):
+            clientes = self._filtrar(Cliente, id_empresa, fecha_inicio, fecha_fin)
+
+        if tipo_contraparte in ("proveedor", None):
+            proveedores = self._filtrar(Proveedor, id_empresa, fecha_inicio, fecha_fin)
+
+        return {
+            "empresa_id": id_empresa,
+            "filtros": {
+                "tipo_contraparte": tipo_contraparte,
+                "fecha_inicio": str(fecha_inicio) if fecha_inicio else None,
+                "fecha_fin": str(fecha_fin) if fecha_fin else None
+            },
+            "registros": {
+                "clientes": clientes,
+                "proveedores": proveedores
+            }
+        }
