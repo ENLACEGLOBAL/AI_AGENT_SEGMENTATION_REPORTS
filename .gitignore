@@ -1,0 +1,54 @@
+# ===========================
+# PYTHON / GENERAL
+# ===========================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3
+*.db
+
+# ===========================
+# VIRTUAL ENVIRONMENTS
+# ===========================
+.venv/
+venv/
+env/
+
+# ===========================
+# ENVIRONMENT VARIABLES
+# ===========================
+.env
+.env.*
+!.env.example
+
+# ===========================
+# LOGS & TEMP FILES
+# ===========================
+logs/
+*.log
+/tmp/
+temp/
+*.tmp
+
+# ===========================
+# SYSTEM / EDITOR FILES
+# ===========================
+.DS_Store
+Thumbs.db
+
+# ===========================
+# PYTHON TOOLS
+# ===========================
+.mypy_cache/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# ===========================
+# BUILD / DISTRIBUTION
+# ===========================
+build/
+dist/
+*.egg-info/

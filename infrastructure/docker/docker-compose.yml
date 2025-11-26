@@ -1,0 +1,10 @@
+version: "3.8"
+services:
+  ia-report:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/Dockerfile
+    container_name: ia_report_generator
+    volumes:
+      - ../..:/app
+    command: ["python", "-m", "src.analytics_modules.ia_report_generator"]

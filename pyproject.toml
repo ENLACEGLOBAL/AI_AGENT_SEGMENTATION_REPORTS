@@ -1,0 +1,73 @@
+[project]
+name = "riesgo-transaccional-analytics"
+version = "0.1.0"
+description = "Microservicio para analítica de riesgo transaccional, generación de vistas, gráficos e informes IA."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Equipo RTA", email = "dev@empresa.com" }
+]
+
+dependencies = [
+    # --- Core API ---
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.30.0",
+
+    # --- Config / Validation ---
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.2.1",
+
+    # --- Database ---
+    "sqlalchemy>=2.0.30",
+    "alembic>=1.13.1",
+    "mariadb>=1.1.10",
+
+    # --- Security & JWT ---
+    "python-jose>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+
+    # --- Data / Analytics / ML ---
+    "pandas>=2.2.0",
+    "numpy>=1.26.0",
+    "scikit-learn>=1.4.0",
+    "joblib>=1.4.0",
+
+    # --- Graphs ---
+    "matplotlib>=3.8.0",
+    "seaborn>=0.13.0",
+
+    # --- Storage (S3/local) ---
+    "boto3>=1.34.0",
+
+    # --- Background workers (Celery) ---
+    "celery>=5.4.0",
+    "redis>=5.0.0",
+
+    # --- Utils ---
+    "python-multipart>=0.0.9",
+    "requests>=2.32.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "httpx>=0.27.0",
+    "black>=24.3.0",
+    "ruff>=0.4.0",
+    "ipython>=8.22.0"
+]
+
+[build-system]
+requires = ["setuptools>=67.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.black]
+line-length = 100
+target-version = ['py310']
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "W", "I"]
+ignore = []
