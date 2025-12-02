@@ -1,107 +1,56 @@
-# src/analytics_modules/sector_geo/sector_geo_analytics.py
+# src/analytics_modules/sector_ubicacion/sector_geo_analytics.py
 import pandas as pd
 from typing import Dict, Any, List
 
-
 class SectorGeoAnalytics:
-    """
-    Analítica geográfica para el HTML.
-    Recibe transacciones + información FATF cargada desde la BD.
-    """
 
-    def __init__(
-        self,
-        df_transacciones: pd.DataFrame,
-        df_historico: pd.DataFrame,
-        df_paises_final: pd.DataFrame,
-        df_segmentacion: pd.DataFrame
-    ):
+    def __init__(self, df_transacciones: pd.DataFrame, df_fatf: pd.DataFrame):
         self.df = df_transacciones
-
-        # Unificación FATF
-        self.df_fatf = self._unificar_fatf(df_historico, df_paises_final, df_segmentacion)
-
-    # ---------------------------------------------------------
-    #    NORMALIZAR ORIGEN FATF
-    # ---------------------------------------------------------
-    def _unificar_fatf(
-        self,
-        df_historico: pd.DataFrame,
-        df_final: pd.DataFrame,
-        df_seg: pd.DataFrame
-    ) -> pd.DataFrame:
-
-        frames = []
-
-        if not df_historico.empty:
-            frames.append(
-                df_historico.rename(columns={
-                    "pais": "pais",
-                    "estatus": "estatus"
-                })
-            )
-
-        if not df_final.empty:
-            frames.append(
-                df_final.rename(columns={
-                    "pais": "pais",
-                    "estatus": "estatus"
-                })
-            )
-
-        if not df_seg.empty:
-            frames.append(
-                df_seg.rename(columns={
-                    "pais": "pais",
-                    "categoria": "estatus"
-                })
-            )
-
-        df_all = (
-            pd.concat(frames, ignore_index=True)
-            .dropna(subset=["pais"])
-        )
-
-        # Normalización
-        df_all["pais"] = df_all["pais"].astype(str).str.strip().str.upper()
-        df_all["estatus"] = df_all["estatus"].astype(str).str.strip().str.upper()
-
-        return df_all
+        self.df_fatf = df_fatf
 
     # ---------------------------------------------------------
     # 1. KPIs
     # ---------------------------------------------------------
     def get_kpis(self) -> Dict[str, Any]:
-        alto = self.df[self.df["riesgo"].str.upper() == "ALTO"]
-
+        """Calculate KPIs from transaction data."""
+        # Process ALL transactions, not just high risk ones
+        df_alto = self.df
+        
         return {
-            "total_transacciones": int(len(alto)),
-            "empresas_involucradas": int(alto["empresa"].nunique()),
-            "monto_total": float(alto["monto"].sum())
+            "total_transacciones": len(df_alto),
+            "empresas_involucradas": df_alto.get('empresa', df_alto.get('id_empresa', pd.Series([]))).nunique() if not df_alto.empty else 0,
+            "monto_total": float(df_alto.get('monto', df_alto.get('valor_transaccion', pd.Series([0]))).sum()) if not df_alto.empty else 0
         }
 
     # ---------------------------------------------------------
-    # 2. Mapa Colombia
+    # 2. MAPA COLOMBIA
     # ---------------------------------------------------------
     def get_mapa_colombia(self) -> List[Dict[str, Any]]:
-        alto = self.df[self.df["riesgo"].str.upper() == "ALTO"]
-
-        return [
-            {
-                "departamento": row["departamento"],
-                "coords": [row["lat"], row["lon"]],
-                "empresa": row["empresa"],
-                "ciiu": row["ciiu"],
-                "monto": float(row["monto"])
-            }
-            for _, row in alto.iterrows()
-        ]
+        """Generate map data for Colombia (only ALTO risk)."""
+        df_all_transactions = self.df
+        if df_all_transactions.empty:
+            return []
+        mapa_data = []
+        for _, row in df_all_transactions.iterrows():
+            riesgo = str(row.get('riesgo', '')).upper()
+            if riesgo != 'ALTO':
+                continue
+            mapa_data.append({
+                "lat": row.get('lat', 4.5709),
+                "lon": row.get('lon', -74.2973),
+                "monto": float(row.get('monto', row.get('valor_transaccion', 0))),
+                "contraparte": row.get('nombre', row.get('id_contraparte', 'Unknown')),
+                "riesgo": riesgo
+            })
+        return mapa_data
 
     # ---------------------------------------------------------
-    # 3. Mapa Global FATF
+    # 3. MAPA FATF / GAFI
     # ---------------------------------------------------------
     def get_fatf_status(self) -> Dict[str, str]:
-        return {
-            row["pais"]: row["estatus"]
-            for _, row in self.df_fatf.iterrows()
-        }
+        result = {}
+        for _, row in self.df_fatf.iterrows():
+            pais = str(row["pais"]).strip().upper()
+            estatus = str(row["estatus"]).strip().upper()
+            result[pais] = estatus
+        return result

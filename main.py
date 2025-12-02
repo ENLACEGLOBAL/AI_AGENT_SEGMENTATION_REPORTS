@@ -1,25 +1,30 @@
-from fastapi import FastAPI, Request, UploadFile, File, Form
-from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import json
-from typing import Optional
-import io
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI(title="Análisis de Contrapartes")
+app = FastAPI(title="Riesgo Transaccional API")
+from src.rta_api.api.v1.sector_ubicacion import router as analytics_router
+app.include_router(analytics_router)
+from src.rta_api.api.v1.geo import router as geo_router
+app.include_router(geo_router)
+from src.rta_api.api.v1.reports import router as reports_router
+app.include_router(reports_router)
+from src.rta_api.api.v1.ml import router as ml_router
+app.include_router(ml_router)
+from src.rta_api.api.v1.auth import router as auth_router
+app.include_router(auth_router)
+from src.rta_api.api.v1.maintenance import router as maintenance_router
+app.include_router(maintenance_router)
 
-# Configurar templates
-templates = Jinja2Templates(directory="templates")
+# CORS para consumo desde PHP
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# Variables globales para almacenar datos
-df_clientes = None
-df_proveedores = None
-df_empleados = None
-df_final = None
+# API sin vistas: todo se consume vía JSON
 
 def procesar_datos():
     """Procesa los datos según la lógica del notebook"""
@@ -185,134 +190,29 @@ def generar_graficos(df_data, empresa_id=None):
     
     return graficos
 
-@app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
-    """Página principal"""
-    empresas = []
-    if df_final is not None:
-        empresas = sorted(df_final['id_empresa'].unique().tolist())
-    
-    return templates.TemplateResponse(
-        "index.html",
-        {"request": request, "empresas": empresas, "datos_cargados": df_final is not None}
-    )
+@app.get("/")
+async def index():
+    return {"status": "ok", "service": "riesgo-transaccional-api"}
 
 @app.post("/cargar-datos")
-async def cargar_datos(
-    clientes: UploadFile = File(...),
-    proveedores: UploadFile = File(...),
-    empleados: UploadFile = File(...)
-):
-    """Endpoint para cargar los archivos CSV"""
-    global df_clientes, df_proveedores, df_empleados, df_final
-    
-    try:
-        # Leer los archivos CSV
-        df_clientes = pd.read_csv(io.BytesIO(await clientes.read()))
-        df_proveedores = pd.read_csv(io.BytesIO(await proveedores.read()))
-        df_empleados = pd.read_csv(io.BytesIO(await empleados.read()))
-        
-        # Procesar los datos
-        df_final = procesar_datos()
-        
-        return JSONResponse({
-            "status": "success",
-            "message": "Datos cargados exitosamente",
-            "registros": len(df_final),
-            "empresas": sorted(df_final['id_empresa'].unique().tolist())
-        })
-    except Exception as e:
-        return JSONResponse({
-            "status": "error",
-            "message": f"Error al cargar datos: {str(e)}"
-        }, status_code=400)
+async def cargar_datos():
+    return {"status": "deprecated"}
 
-@app.get("/analisis", response_class=HTMLResponse)
-async def analisis(request: Request, empresa_id: Optional[int] = None):
-    """Página de análisis con gráficos"""
-    if df_final is None:
-        return templates.TemplateResponse(
-            "error.html",
-            {"request": request, "mensaje": "No hay datos cargados"}
-        )
-    
-    # Generar gráficos
-    graficos = generar_graficos(df_final, empresa_id)
-    
-    # Estadísticas generales
-    if empresa_id:
-        df_filtrado = df_final[df_final['id_empresa'] == empresa_id]
-    else:
-        df_filtrado = df_final
-    
-    estadisticas = {
-        "total_contrapartes": len(df_filtrado),
-        "empresas_analizadas": df_filtrado['id_empresa'].nunique(),
-        "suma_total_clientes": f"${df_filtrado['suma_clientes'].sum():,.2f}",
-        "suma_total_proveedores": f"${df_filtrado['suma_proveedores'].sum():,.2f}",
-        "suma_total_empleados": f"${df_filtrado['suma_empleados'].sum():,.2f}"
-    }
-    
-    empresas = sorted(df_final['id_empresa'].unique().tolist())
-    
-    return templates.TemplateResponse(
-        "analisis.html",
-        {
-            "request": request,
-            "graficos": graficos,
-            "estadisticas": estadisticas,
-            "empresas": empresas,
-            "empresa_seleccionada": empresa_id
-        }
-    )
+@app.get("/analisis")
+async def analisis():
+    return {"status": "deprecated"}
 
-@app.get("/tabla-datos", response_class=HTMLResponse)
-async def tabla_datos(request: Request, empresa_id: Optional[int] = None):
-    """Página con tabla de datos"""
-    if df_final is None:
-        return templates.TemplateResponse(
-            "error.html",
-            {"request": request, "mensaje": "No hay datos cargados"}
-        )
-    
-    if empresa_id:
-        df_mostrar = df_final[df_final['id_empresa'] == empresa_id]
-    else:
-        df_mostrar = df_final
-    
-    # Convertir a formato para la tabla
-    datos = df_mostrar.to_dict('records')
-    columnas = df_mostrar.columns.tolist()
-    
-    empresas = sorted(df_final['id_empresa'].unique().tolist())
-    
-    return templates.TemplateResponse(
-        "tabla.html",
-        {
-            "request": request,
-            "datos": datos,
-            "columnas": columnas,
-            "empresas": empresas,
-            "empresa_seleccionada": empresa_id
-        }
-    )
+@app.get("/tabla-datos")
+async def tabla_datos():
+    return {"status": "deprecated"}
 
 @app.get("/api/datos")
-async def api_datos(empresa_id: Optional[int] = None):
-    """API endpoint para obtener datos en JSON"""
-    if df_final is None:
-        return JSONResponse({"error": "No hay datos cargados"}, status_code=400)
-    
-    if empresa_id:
-        df_filtrado = df_final[df_final['id_empresa'] == empresa_id]
-    else:
-        df_filtrado = df_final
-    
-    return JSONResponse(df_filtrado.to_dict('records'))
+async def api_datos():
+    return {"status": "deprecated"}
 
 if __name__ == "__main__":
     import uvicorn
-    print("🚀 Iniciando aplicación...")
-    print("📍 Accede a: http://localhost:8000")
-    print("📊 Documentación API: http://localhost:8000/docs")
+    print("🚀 API iniciada...")
+    print("📍 http://localhost:8000")
+    print("📊 http://localhost:8000/docs")
     uvicorn.run(app, host="0.0.0.0", port=8000)

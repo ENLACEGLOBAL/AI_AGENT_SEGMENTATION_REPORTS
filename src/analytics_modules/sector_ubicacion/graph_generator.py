@@ -20,16 +20,18 @@ class GraphGenerator:
 
     def __init__(self, df_transacciones: pd.DataFrame):
         self.df = df_transacciones
-        self.alto = df_transacciones[df_transacciones["riesgo"] == "ALTO"]
+        self.alto = df_transacciones[df_transacciones.get("riesgo", pd.Series(["ALTO"] * len(df_transacciones))) == "ALTO"]
 
     # -----------------------------------------
     # 1. DATASET para el JSON
     # -----------------------------------------
     def get_donut_dataset(self) -> Dict[str, Any]:
-        group = self.alto.groupby("actividad")["monto"].sum()
+        group = self.alto.groupby(self.alto.get("actividad", pd.Series(["General"] * len(self.alto))))[
+            self.alto.get("monto", pd.Series([0] * len(self.alto)))
+        ].sum()
         return {
             "labels": list(group.index),
-            "values": list(group.values)
+            "values": [float(v) for v in group.values]
         }
 
     # -----------------------------------------
@@ -54,14 +56,35 @@ class GraphGenerator:
         return f"data:image/png;base64,{base64_data}"
 
     # -----------------------------------------
-    # 3. Cargar GeoJSON desde las URLs
+    # 3. Save chart to file
+    # -----------------------------------------
+    def save_donut_chart(self, filepath: str) -> str:
+        """Save donut chart to file and return the filepath."""
+        dataset = self.get_donut_dataset()
+
+        plt.figure(figsize=(6, 6))
+        plt.pie(
+            dataset["values"],
+            labels=dataset["labels"],
+            autopct='%1.1f%%',
+            startangle=90
+        )
+        plt.title('Distribución por Actividad')
+        plt.tight_layout()
+        plt.savefig(filepath, dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        return filepath
+
+    # -----------------------------------------
+    # 4. Cargar GeoJSON desde las URLs
     # -----------------------------------------
     def load_geojson(self, url: str) -> Dict[str, Any]:
         with urllib.request.urlopen(url) as response:
             return json.loads(response.read().decode())
 
     # -----------------------------------------
-    # 4. Paquete completo para el JSON final
+    # 5. Paquete completo para el JSON final
     # -----------------------------------------
     def build_sector_geo_payload(self) -> Dict[str, Any]:
         return {
