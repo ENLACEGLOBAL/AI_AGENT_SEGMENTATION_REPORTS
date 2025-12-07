@@ -14,6 +14,8 @@ from src.rta_api.api.v1.auth import router as auth_router
 app.include_router(auth_router)
 from src.rta_api.api.v1.maintenance import router as maintenance_router
 app.include_router(maintenance_router)
+from src.rta_api.api.v1.cruces import router as cruces_router
+app.include_router(cruces_router)
 
 # CORS para consumo desde PHP
 app.add_middleware(
