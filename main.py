@@ -1,5 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from src.db.base import source_engine, Base
+import src.db.models.empresa
+import src.db.models.usuario
+import src.db.models.sector_ubicacion_analytics
+import src.db.models.html_report
+import src.db.models.pdf_report
+import src.db.models.ml_model
 
 app = FastAPI(title="Riesgo Transaccional API")
 from src.rta_api.api.v1.sector_ubicacion import router as analytics_router
@@ -27,6 +34,9 @@ app.add_middleware(
 )
 
 # API sin vistas: todo se consume vía JSON
+@app.on_event("startup")
+async def startup_event():
+    Base.metadata.create_all(bind=source_engine)
 
 def procesar_datos():
     """Procesa los datos según la lógica del notebook"""
