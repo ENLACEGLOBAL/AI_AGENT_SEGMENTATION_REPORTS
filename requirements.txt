@@ -1,0 +1,55 @@
+# =====================================================
+# REQUIREMENTS.TXT - Riesgo Transaccional API
+# =====================================================
+
+# ===== CORE FRAMEWORK =====
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# ===== DATABASE =====
+sqlalchemy==2.0.23
+pymysql==1.1.0
+cryptography==41.0.7  # Para PyMySQL con SSL
+alembic==1.13.0  # Migraciones de BD (opcional)
+
+# ===== DATA PROCESSING =====
+openpyxl==3.1.2  # Para leer archivos Excel
+
+# ===== VISUALIZACIÓN Y GRÁFICOS =====
+matplotlib==3.8.2
+plotly==5.18.0
+pillow==10.1.0  # Procesamiento de imágenes
+
+# ===== PDF GENERATION =====
+reportlab==4.0.7
+pypdf2==3.0.1
+
+# ===== SECURITY & AUTH =====
+python-jose[cryptography]==3.3.0  # JWT
+passlib[bcrypt]==1.7.4  # Hashing de passwords
+python-multipart==0.0.6  # Para form data
+
+# ===== HTTP CLIENT =====
+httpx==0.25.2  # Para llamadas HTTP asíncronas
+aiohttp==3.9.1
+
+# ===== UTILITIES =====
+python-dateutil==2.8.2
+pytz==2023.3.post1
+pyyaml==6.0.1
+
+# ===== GEOGRAPHIC DATA =====
+geopy==2.4.1  # Geocoding (opcional)
+
+# ===== DEVELOPMENT TOOLS (OPTIONAL) =====
+# pytest==7.4.3  # Testing
+# pytest-asyncio==0.21.1
+# black==23.11.0  # Code formatter
+# flake8==6.1.0  # Linter
+# mypy==1.7.1  # Type checking
+
+# ===== PRODUCTION TOOLS (OPTIONAL) =====
+# gunicorn==21.2.0  # WSGI server para producción
+# python-dotenv==1.0.0  # Variables de entorno

@@ -13,6 +13,8 @@ import pandas as pd
 from src.analytics_modules.cruces_entidades.cruces_analytics import CrucesAnalytics
 from src.analytics_modules.cruces_entidades.cruces_graph_generator import CrucesGraphGenerator
 from src.db.models.cliente import Cliente
+from src.db.models.proveedor import Proveedor
+from src.db.models.empleado import Empleado
 from src.db.models.reference_tables import HistoricoPaises
 
 # Directorio para almacenar JSON generados
@@ -53,28 +55,28 @@ class CrucesAnalyticsService:
         # 2. Cargar proveedores (asume tabla similar a clientes)
         # AJUSTA según tu esquema real - ejemplo:
         # from src.db.models.proveedor import Proveedor
-        # query_proveedores = db.query(Proveedor)
-        # if empresa_id:
-        #     query_proveedores = query_proveedores.filter(Proveedor.id_empresa == empresa_id)
-        # df_proveedores = pd.read_sql(query_proveedores.statement, db.bind)
+        query_proveedores = db.query(Proveedor)
+        if empresa_id:
+            query_proveedores = query_proveedores.filter(Proveedor.id_empresa == empresa_id)
+        df_proveedores = pd.read_sql(query_proveedores.statement, db.bind)
         
         # Por ahora, creamos DF vacío - DEBES IMPLEMENTAR ESTO
-        df_proveedores = pd.DataFrame(columns=[
-            'id_empresa', 'no_documento_de_identidad', 'valor_transaccion', 
-            'orden_clasificacion_del_riesgo'
-        ])
+        #df_proveedores = pd.DataFrame(columns=[
+        #    'id_empresa', 'no_documento_de_identidad', 'valor_transaccion', 
+        #    'orden_clasificacion_del_riesgo'
+        #])
         
         # 3. Cargar empleados (asume tabla similar)
         # from src.db.models.empleado import Empleado
-        # query_empleados = db.query(Empleado)
-        # if empresa_id:
-        #     query_empleados = query_empleados.filter(Empleado.id_empresa == empresa_id)
-        # df_empleados = pd.read_sql(query_empleados.statement, db.bind)
+        query_empleados = db.query(Empleado)
+        if empresa_id:
+            query_empleados = query_empleados.filter(Empleado.id_empresa == empresa_id)
+        df_empleados = pd.read_sql(query_empleados.statement, db.bind)
         
         # Por ahora, creamos DF vacío - DEBES IMPLEMENTAR ESTO
-        df_empleados = pd.DataFrame(columns=[
-            'id_empresa', 'id_empleado', 'valor', 'conteo_alto'
-        ])
+        #df_empleados = pd.DataFrame(columns=[
+        #    'id_empresa', 'id_empleado', 'valor', 'conteo_alto'
+        #])
         
         return df_clientes, df_proveedores, df_empleados
     
