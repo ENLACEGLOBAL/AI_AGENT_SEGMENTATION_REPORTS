@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
-from src.db.base import SessionLocal
+from src.db.base import TargetSessionLocal
 from src.services.cruces_analytics_service import cruces_analytics_service
 from src.core.security import require_jwt
 
@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/v1/cruces", tags=["cruces"])
 
 
 def get_db():
-    db = SessionLocal()
+    db = TargetSessionLocal()
     try:
         yield db
     finally:

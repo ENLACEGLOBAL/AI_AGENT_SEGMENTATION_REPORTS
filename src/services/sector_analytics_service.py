@@ -12,6 +12,7 @@ from src.db.repositories.generated_report_repo import GeneratedReportRepository
 from src.analytics_modules.sector_ubicacion.sector_geo_analytics import SectorGeoAnalytics
 from src.analytics_modules.sector_ubicacion.graph_generator import GraphGenerator
 from src.services.map_image_service import map_image_service
+from src.db.base import SourceSessionLocal
 
 # Encryption key (should be in environment variables in production)
 ENCRYPTION_KEY = os.getenv('ENCRYPTION_KEY', Fernet.generate_key())
@@ -60,15 +61,24 @@ class SectorAnalyticsService:
             Dictionary with analytics data and encrypted image path
         """
         try:
-            # 1. Load Transaction Data from CSV
-            csv_path = os.path.join(DATA_PROVISIONAL_DIR, "datos prueba clientes.csv")
-            if not os.path.exists(csv_path):
+            # 1. Load Transaction Data from CSV (clientes y proveedores)
+            clientes_path = os.path.join(DATA_PROVISIONAL_DIR, "datos prueba clientes.csv")
+            proveedores_path = os.path.join(DATA_PROVISIONAL_DIR, "datos prueba proveedores.csv")
+            if not os.path.exists(clientes_path) and not os.path.exists(proveedores_path):
                 return {
                     "status": "error",
-                    "message": f"CSV file not found at {csv_path}"
+                    "message": f"CSV files not found at {clientes_path} and/or {proveedores_path}"
                 }
-            
-            df_csv = pd.read_csv(csv_path)
+            dfs = []
+            if os.path.exists(clientes_path):
+                df_cli = pd.read_csv(clientes_path)
+                df_cli["tipo_contraparte"] = "cliente"
+                dfs.append(df_cli)
+            if os.path.exists(proveedores_path):
+                df_pro = pd.read_csv(proveedores_path)
+                df_pro["tipo_contraparte"] = "proveedor"
+                dfs.append(df_pro)
+            df_csv = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
             
             # Filter by empresa_id
             df_empresa = df_csv[df_csv['id_empresa'] == empresa_id].copy()
@@ -151,6 +161,9 @@ class SectorAnalyticsService:
                 'valor_transaccion': 'monto',
                 'orden_clasificacion_del_riesgo': 'riesgo'
             })
+            # Proveedores ID field
+            if 'id_contraparte' not in df_empresa.columns and 'no_documento_de_identidad' in df_empresa.columns:
+                df_empresa = df_empresa.rename(columns={'no_documento_de_identidad': 'id_contraparte'})
             
             # Ensure required columns exist
             df_empresa['empresa'] = df_empresa['id_empresa'].astype(str)
@@ -162,6 +175,8 @@ class SectorAnalyticsService:
                 df_empresa['lat'] = 4.5709
             if 'lon' not in df_empresa.columns:
                 df_empresa['lon'] = -74.2973
+            if 'tipo_contraparte' not in df_empresa.columns:
+                df_empresa['tipo_contraparte'] = ''
             
             # Create FATF data from the DB source
             if not df_paises.empty:
@@ -219,7 +234,8 @@ class SectorAnalyticsService:
                     'ciiu': str(pick(r, tabla_cols['ciiu']) or ''),
                     'actividad': str(pick(r, tabla_cols['actividad']) or ''),
                     'departamento': str(pick(r, tabla_cols['departamento']) or ''),
-                    'monto': float(pick(r, tabla_cols['monto']) or 0)
+                    'monto': float(pick(r, tabla_cols['monto']) or 0),
+                    'tipo_contraparte': str(r.get('tipo_contraparte', ''))
                 })
             
             # Generate graph and save image
@@ -281,8 +297,12 @@ class SectorAnalyticsService:
             with open(json_path, 'w', encoding='utf-8') as f:
                 json.dump(analytics_data, f, ensure_ascii=False, indent=2)
             
-            # Save encrypted image path to database
-            self.repo.create_report(db, encrypted_image_path, empresa_id)
+            src_db = SourceSessionLocal()
+            try:
+                self.repo.create_report(src_db, encrypted_image_path, empresa_id)
+                src_db.commit()
+            finally:
+                src_db.close()
             
             print(f"✅ Analytics generated: {json_path}")
             print(f"✅ Image saved: {image_path}")

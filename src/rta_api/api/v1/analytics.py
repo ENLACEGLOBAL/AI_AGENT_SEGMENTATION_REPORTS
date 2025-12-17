@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from src.db.base import SessionLocal
+from src.db.base import TargetSessionLocal
 from src.db.repositories.riesgo_repo import RiesgoRepository
 from src.domain.services.analytics_service import AnalyticsService
 from src.core.security import generar_jwt
@@ -10,7 +10,7 @@ from src.core.security import generar_jwt
 router = APIRouter(prefix="/analytics")
 
 def get_db():
-    db = SessionLocal()
+    db = TargetSessionLocal()
     try:
         yield db
     finally:

@@ -9,8 +9,30 @@ Servicio headless para analítica de riesgo sector-ubicación, generación de gr
   - `DB_ENGINE`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`
   - `JWT_SECRET`, `JWT_ALGORITHM`
 
+## Instalación
+- Crear entorno virtual (Windows PowerShell):
+  - `python -m venv .venv`
+  - `.\.venv\Scripts\Activate.ps1`
+- Actualizar `pip` y herramientas base:
+  - `pip install -U pip wheel setuptools`
+- Instalar dependencias del servicio:
+  - `pip install fastapi "uvicorn[standard]" sqlalchemy pymysql pydantic-settings PyJWT pandas matplotlib reportlab cryptography`
+- Preparar estructura de datos temporal:
+  - Crear las carpetas `data_provisional/` y `generated_images/` si no existen
+- Configurar variables en `.env` (ejemplo):
+  - `DB_ENGINE=mariadb`
+  - `DB_HOST=localhost`
+  - `DB_PORT=3306`
+  - `DB_USER=usuario`
+  - `DB_PASSWORD=secreto`
+  - `DB_NAME=mi_bd`
+  - `JWT_SECRET=mi_super_secreto`
+  - `JWT_ALGORITHM=HS256`
+
 ## Arranque
-- `python main.py`
+- Opción sencilla: `python main.py`
+- Opción alternativa: `uvicorn main:app --reload --host 0.0.0.0 --port 8000`
+- Documentación interactiva: `http://localhost:8000/docs`
 - CORS habilitado; consumo externo requiere JWT.
 
 ## Autenticación
