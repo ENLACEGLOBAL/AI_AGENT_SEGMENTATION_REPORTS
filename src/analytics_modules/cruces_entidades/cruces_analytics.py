@@ -10,10 +10,11 @@ from typing import Dict, Any, List
 class CrucesAnalytics:
     """Analiza cruces entre clientes, proveedores y empleados"""
     
-    def __init__(self, df_clientes: pd.DataFrame, df_proveedores: pd.DataFrame, df_empleados: pd.DataFrame):
+    def __init__(self, df_clientes: pd.DataFrame, df_proveedores: pd.DataFrame, df_empleados: pd.DataFrame, df_formularios: pd.DataFrame | None = None):
         self.df_clientes = df_clientes
         self.df_proveedores = df_proveedores
         self.df_empleados = df_empleados
+        self.df_formularios = df_formularios
         self.df_cruces = None
         
     def procesar_datos(self) -> pd.DataFrame:
@@ -100,9 +101,51 @@ class CrucesAnalytics:
             (df_filtrado['Mayor_riesgo_proveedores'] >= 3) | 
             (df_filtrado['Mayor_riesgo_empleados'] == 'Alto')
         ]
-        
+
+        if self.df_formularios is not None and not self.df_formularios.empty:
+            df_final = self._verificar_formularios(df_final)
+        else:
+            df_final['tiene_formulario'] = False
+            df_final['fecha_formulario'] = None
+        pass
+
         self.df_cruces = df_final
         return df_final
+    
+    def _verificar_formularios(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Verifica si cada contraparte tiene formulario de debida diligencia.
+        Cruza por id_empresa y numero_id (id_contraparte).
+        """
+        # Normalizar columna de número ID en formularios
+        df_forms = self.df_formularios.copy()
+        df_forms['numero_id'] = df_forms['numero_id'].astype(str)
+        
+        # Crear set de (empresa, numero_id) que tienen formulario
+        formularios_set = set(
+            zip(df_forms['id_empresa'], df_forms['numero_id'])
+        )
+        
+        # Crear diccionario de fechas de registro
+        fecha_dict = dict(
+            zip(
+                zip(df_forms['id_empresa'], df_forms['numero_id']),
+                df_forms['fecha_registro']
+            )
+        )
+        
+        # Verificar cada fila
+        df['tiene_formulario'] = df.apply(
+            lambda row: (int(row['id_empresa']), str(row['id_contraparte'])) in formularios_set,
+            axis=1
+        )
+        
+        df['fecha_formulario'] = df.apply(
+            lambda row: fecha_dict.get((int(row['id_empresa']), str(row['id_contraparte']))),
+            axis=1
+        )
+        
+        return df
     
     def get_kpis(self) -> Dict[str, Any]:
         """Calcula KPIs principales"""
@@ -135,14 +178,21 @@ class CrucesAnalytics:
             df['suma_empleados'].sum()
         )
         
+        con_formulario = df['tiene_formulario'].sum()
+        sin_formulario = len(df) - con_formulario
+        porcentaje_con_formulario = (con_formulario / len(df) * 100) if len(df) > 0 else 0.0
+        
         return {
             "total_registros": len(df),
             "entidades_cruces": df['id_contraparte'].nunique(),
             "porcentaje_cruces": round((len(df) / max(len(self.df_clientes), 1)) * 100, 2),
             "riesgo_promedio": round(riesgo_promedio, 1),
             "alto_riesgo_count": alto_riesgo_count,
-            "valor_total_riesgo": float(valor_total)
-        }
+            "valor_total_riesgo": float(valor_total),
+            "con_formulario": int(con_formulario),
+            "sin_formulario": int(sin_formulario),
+            "porcentaje_con_formulario": round(porcentaje_con_formulario, 1)
+        } 
     
     def get_distribucion_riesgo(self) -> Dict[str, int]:
         """Distribución por nivel de riesgo"""
@@ -255,6 +305,9 @@ class CrucesAnalytics:
                     "riesgo": r_empleado_str
                 }
             
+            tiene_formulario = bool(row.get('tiene_formulario', False))
+            fecha_formulario = row.get('fecha_formulario')
+            
             tabla.append({
                 "id_contraparte": str(row['id_contraparte']),
                 "id_empresa": int(row['id_empresa']),
@@ -262,7 +315,44 @@ class CrucesAnalytics:
                 "cliente": cliente_info,
                 "proveedor": proveedor_info,
                 "empleado": empleado_info,
-                "riesgo_maximo": max(r_cliente, r_proveedor, r_empleado)
+                "riesgo_maximo": max(r_cliente, r_proveedor, r_empleado),
+                "tiene_formulario": tiene_formulario,
+                "fecha_formulario": str(fecha_formulario) if fecha_formulario else None
             })
         
         return tabla
+    
+    def get_estadisticas_formularios(self) -> Dict[str, Any]:
+        """
+        ⭐ NUEVO: Estadísticas específicas de formularios
+        """
+        if self.df_cruces is None or self.df_cruces.empty:
+            return {
+                "total": 0,
+                "con_formulario": 0,
+                "sin_formulario": 0,
+                "porcentaje_completado": 0.0,
+                "alto_riesgo_sin_formulario": 0
+            }
+        
+        df = self.df_cruces
+        total = len(df)
+        con_formulario = df['tiene_formulario'].sum()
+        sin_formulario = total - con_formulario
+        
+        # Contar alto riesgo sin formulario
+        alto_riesgo_sin_form = 0
+        for _, row in df[~df['tiene_formulario']].iterrows():
+            r_cliente = row.get('Mayor_riesgo_clientes', 0)
+            r_proveedor = row.get('Mayor_riesgo_proveedores', 0)
+            r_empleado = 5 if str(row.get('Mayor_riesgo_empleados', '')).upper() == 'ALTO' else 0
+            if max(r_cliente, r_proveedor, r_empleado) >= 4:
+                alto_riesgo_sin_form += 1
+        
+        return {
+            "total": total,
+            "con_formulario": int(con_formulario),
+            "sin_formulario": int(sin_formulario),
+            "porcentaje_completado": round((con_formulario / total * 100) if total > 0 else 0.0, 1),
+            "alto_riesgo_sin_formulario": alto_riesgo_sin_form
+        }

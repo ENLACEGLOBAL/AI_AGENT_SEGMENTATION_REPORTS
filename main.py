@@ -1,12 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from src.db.base import source_engine, Base
-import src.db.models.empresa
-import src.db.models.usuario
-import src.db.models.sector_ubicacion_analytics
+#import src.db.models.empresa
+#import src.db.models.usuario
+#import src.db.models.sector_ubicacion_analytics
 import src.db.models.html_report
-import src.db.models.pdf_report
-import src.db.models.ml_model
+#import src.db.models.pdf_report
+#import src.db.models.ml_model
 
 app = FastAPI(title="Riesgo Transaccional API")
 from src.rta_api.api.v1.sector_ubicacion import router as analytics_router

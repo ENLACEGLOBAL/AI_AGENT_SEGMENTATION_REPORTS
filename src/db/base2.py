@@ -1,0 +1,35 @@
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, declarative_base
+from src.core.config2 import settings
+
+source_engine = create_engine(
+    settings.SOURCE_DATABASE_URL if hasattr(settings, "SOURCE_DATABASE_URL") else settings.DATABASE_URL,
+    pool_pre_ping=True,
+    future=True
+)
+
+target_engine = create_engine(
+    settings.TARGET_DATABASE_URL if hasattr(settings, "TARGET_DATABASE_URL") else settings.DATABASE_URL,
+    pool_pre_ping=True,
+    future=True
+)
+
+SourceSessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=source_engine,
+    future=True
+)
+
+TargetSessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=target_engine,
+    future=True
+)
+
+# Backward-compatible aliases
+engine = target_engine
+SessionLocal = TargetSessionLocal
+
+Base = declarative_base()

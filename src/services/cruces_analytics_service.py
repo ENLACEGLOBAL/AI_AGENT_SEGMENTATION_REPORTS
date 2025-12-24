@@ -15,11 +15,8 @@ from src.analytics_modules.cruces_entidades.cruces_graph_generator import Cruces
 from src.db.models.cliente import Cliente
 from src.db.models.proveedor import Proveedor
 from src.db.models.empleado import Empleado
+from src.db.models.formulario import Formulario
 from src.db.models.reference_tables import HistoricoPaises
-
-# Directorio para almacenar JSON generados
-DATA_PROVISIONAL_DIR = "data_provisional"
-os.makedirs(DATA_PROVISIONAL_DIR, exist_ok=True)
 
 
 class CrucesAnalyticsService:
@@ -31,6 +28,40 @@ class CrucesAnalyticsService:
     def __init__(self):
         pass
     
+
+    def _load_formularios_from_db(
+        self, 
+        db: Session, 
+        empresa_id: Optional[int] = None
+    ) -> pd.DataFrame:
+        """
+        Carga formularios desde la vista forms_existentes.
+        """
+        query = db.query(Formulario)
+
+        if empresa_id:
+            query = query.filter(Formulario.id_empresa == empresa_id)
+
+        df = pd.read_sql(query.statement, db.bind)
+
+        if df.empty:
+            return pd.DataFrame(columns=[
+                'id_formulario',
+                'id_empresa',
+                'fecha_registro',
+                'nombre_completo',
+                'numero_id',
+                'contraparte'
+            ])
+
+        # Limpiezas defensivas (aunque la vista ya limpia)
+        df['numero_id'] = df['numero_id'].astype(str).str.strip()
+        df['fecha_registro'] = pd.to_datetime(df['fecha_registro'], errors='coerce')
+
+        print(f"   ✅ Formularios cargados desde BD: {len(df)} registros")
+
+        return df
+
     def _load_data_from_db(self, db: Session, empresa_id: Optional[int] = None) -> tuple:
         """
         Carga datos desde la base de datos.
@@ -80,6 +111,17 @@ class CrucesAnalyticsService:
         
         return df_clientes, df_proveedores, df_empleados
     
+    @staticmethod
+    def clean_nans(obj):
+        if isinstance(obj, dict):
+            return {k: CrucesAnalyticsService.clean_nans(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [CrucesAnalyticsService.clean_nans(v) for v in obj]
+        elif isinstance(obj, float):
+            return None if pd.isna(obj) else obj
+        else:
+            return obj
+
     def generate_cruces_analytics(
         self, 
         db: Session, 
@@ -110,10 +152,13 @@ class CrucesAnalyticsService:
             print(f"   ✅ Clientes: {len(df_clientes)} registros")
             print(f"   ✅ Proveedores: {len(df_proveedores)} registros")
             print(f"   ✅ Empleados: {len(df_empleados)} registros")
+
+            print(f"📋 Cargando formularios desde la BD...")
+            df_formularios = self._load_formularios_from_db(db, empresa_id)
             
             # 2. Procesar con CrucesAnalytics
             print("🔄 Procesando cruces de entidades...")
-            analytics = CrucesAnalytics(df_clientes, df_proveedores, df_empleados)
+            analytics = CrucesAnalytics(df_clientes=df_clientes, df_proveedores=df_proveedores, df_empleados=df_empleados, df_formularios=df_formularios)
             df_cruces = analytics.procesar_datos()
             
             if df_cruces.empty:
@@ -135,6 +180,7 @@ class CrucesAnalyticsService:
             distribucion_categorias = analytics.get_distribucion_categorias()
             top_empresas = analytics.get_top_empresas()
             tabla_detalles = analytics.get_tabla_detalles(empresa_id)
+            estadisticas_formularios = analytics.get_estadisticas_formularios()
             
             # 4. Generar gráficos
             print("📊 Generando gráficos...")
@@ -153,9 +199,12 @@ class CrucesAnalyticsService:
                 "distribucion_categorias": distribucion_categorias,
                 "top_empresas": top_empresas,
                 "tabla_detalles": tabla_detalles,
+                "estadisticas_formularios": estadisticas_formularios,
                 "charts": charts
             }
             
+            analytics_data = self.clean_nans(analytics_data)
+
             # 6. Guardar JSON
             json_filename = f"cruces_analytics_{empresa_id if empresa_id else 'all'}_{timestamp}.json"
             json_path = os.path.join(DATA_PROVISIONAL_DIR, json_filename)

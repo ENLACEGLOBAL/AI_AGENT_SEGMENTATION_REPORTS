@@ -162,6 +162,9 @@ def get_cruces_dashboard(
         riesgo_max = item.get('riesgo_maximo', 0)
         
         # Badge de riesgo
+
+        riesgo_max = riesgo_max or 0
+        
         if riesgo_max >= 4:
             badge_class = "badge-alto"
             badge_text = "ALTO"
@@ -175,6 +178,28 @@ def get_cruces_dashboard(
         cliente = item.get('cliente')
         proveedor = item.get('proveedor')
         empleado = item.get('empleado')
+
+        tiene_form = item.get('tiene_formulario', False)
+        fecha_form = item.get('fecha_formulario')
+        if tiene_form:
+            form_badge = '<span class="badge badge-si">SÍ</span>'
+            if fecha_form:
+                form_badge += f'<br><small style="color:#666;">{fecha_form}</small>'
+        else:
+            form_badge = '<span class="badge badge-no">NO</span>'
+        
+        html_content += f"""
+                <tr>
+                    <td><strong>{id_contra}</strong></td>
+                    <td>{empresa}</td>
+                    <td>{cats} categorías</td>
+                    <td>{f"${cliente['suma']:,.0f}" if cliente else "—"}</td>
+                    <td>{f"${proveedor['suma']:,.0f}" if proveedor else "—"}</td>
+                    <td>{f"${empleado['suma']:,.0f}" if empleado else "—"}</td>
+                    <td><span class="badge {badge_class}">{badge_text}</span></td>
+                    <td>{form_badge}</td>
+                </tr>
+        """
         
         html_content += f"""
                 <tr>
