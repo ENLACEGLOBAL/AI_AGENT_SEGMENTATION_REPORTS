@@ -20,3 +20,4 @@ def generate_pdf(empresa_id: int = Query(...), tipo_contraparte: str = Query("cl
 @router.post("/html")
 def generate_html(empresa_id: int = Query(...), db: Session = Depends(get_db), claims: dict = Depends(require_jwt)):
     return report_orchestrator.generate_html(empresa_id, db)
+

@@ -2,12 +2,14 @@
 """
 Endpoints API para análisis de cruces de entidades
 """
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, BackgroundTasks
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
+from typing import Optional
 
 from src.db.base import TargetSessionLocal
 from src.services.cruces_analytics_service import cruces_analytics_service
+from src.services.pdf_risk_report_service import PDFRiskReportService
 from src.core.security import require_jwt
 
 router = APIRouter(prefix="/api/v1/cruces", tags=["cruces"])
@@ -20,6 +22,52 @@ def get_db():
     finally:
         db.close()
 
+def generate_pdf_background(json_path: str, empresa_id: int):
+    """Tarea en segundo plano para generar el PDF"""
+    try:
+        service = PDFRiskReportService()
+        # Generar PDF usando el JSON recién creado
+        # Nota: PDFRiskReportService espera el path del JSON
+        result = service.generate_pdf_report(
+            analytics_json_path=json_path,
+            tipo_contraparte="cliente", # Default, se ajusta internamente
+            output_path=None # Auto-generado
+        )
+        print(f"✅ PDF generado automáticamente: {result.get('file')}")
+    except Exception as e:
+        print(f"❌ Error generando PDF en background: {e}")
+
+@router.post("/process-batch")
+def process_batch_analytics(
+    empresa_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    # claims: dict = Depends(require_jwt) # Opcional: si la otra app no tiene token, comentar esto o usar API Key
+):
+    """
+    Endpoint Orquestador:
+    1. Genera Analytics (JSON)
+    2. Dispara generación de PDF en background
+    3. Retorna estado inmediato
+    """
+    # 1. Generar Analytics
+    analytics_result = cruces_analytics_service.generate_cruces_analytics(db, empresa_id)
+    
+    if analytics_result.get("status") == "error":
+        return analytics_result
+        
+    json_path = analytics_result.get("json_path")
+    
+    if json_path:
+        # 2. Programar generación de PDF
+        background_tasks.add_task(generate_pdf_background, json_path, empresa_id)
+        
+    return {
+        "status": "success",
+        "message": "Analytics generado y reporte PDF en proceso",
+        "analytics_path": json_path,
+        "empresa_id": empresa_id
+    }
 
 @router.get("/analytics")
 def get_cruces_analytics(

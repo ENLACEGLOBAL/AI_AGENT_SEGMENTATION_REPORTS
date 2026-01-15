@@ -1,4 +1,3 @@
-version: "3.8"
 services:
   ia-report:
     build:
@@ -7,4 +6,6 @@ services:
     container_name: ia_report_generator
     volumes:
       - ../..:/app
-    command: ["python", "-m", "src.analytics_modules.ia_report_generator"]
+    ports:
+      - "8000:8000"
+    command: ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

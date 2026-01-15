@@ -17,6 +17,52 @@ class CrucesAnalytics:
         self.df_formularios = df_formularios
         self.df_cruces = None
         
+    def _ensure_columns(self, df: pd.DataFrame, id_col: str, val_col_options: List[str], risk_col_options: List[str]) -> pd.DataFrame:
+        """Normaliza columnas para el análisis"""
+        df = df.copy()
+        
+        # 1. ID
+        if id_col in df.columns:
+            # Evitar duplicados si ya existe la columna destino
+            if id_col != 'id_contraparte' and 'id_contraparte' in df.columns:
+                df = df.drop(columns=['id_contraparte'])
+            df = df.rename(columns={id_col: 'id_contraparte'})
+            
+        if 'id_contraparte' not in df.columns:
+            df['id_contraparte'] = 'UNKNOWN'
+            
+        # 2. Valor (Suma)
+        val_found = False
+        for col in val_col_options:
+            if col in df.columns:
+                # Evitar duplicados
+                if col != 'valor_suma' and 'valor_suma' in df.columns:
+                    df = df.drop(columns=['valor_suma'])
+                df = df.rename(columns={col: 'valor_suma'})
+                val_found = True
+                break
+        
+        # Si no encontramos una de las opciones, pero ya existía 'valor_suma', la mantenemos.
+        # Si no existe, creamos default.
+        if not val_found and 'valor_suma' not in df.columns:
+            df['valor_suma'] = 0.0
+            
+        # 3. Riesgo
+        risk_found = False
+        for col in risk_col_options:
+            if col in df.columns:
+                # Evitar duplicados
+                if col != 'riesgo' and 'riesgo' in df.columns:
+                    df = df.drop(columns=['riesgo'])
+                df = df.rename(columns={col: 'riesgo'})
+                risk_found = True
+                break
+                
+        if not risk_found and 'riesgo' not in df.columns:
+            df['riesgo'] = 0 # Default bajo riesgo
+            
+        return df
+
     def procesar_datos(self) -> pd.DataFrame:
         """
         Procesa los datos según la lógica del notebook:
@@ -25,13 +71,19 @@ class CrucesAnalytics:
         - Filtra por alto riesgo
         """
         # 1. Agregar Clientes
+        df_cli_norm = self._ensure_columns(
+            self.df_clientes, 
+            'num_id', 
+            ['valor_transaccion', 'valor', 'monto'], 
+            ['orden_clasificacion_del_riesgo', 'riesgo', 'nivel_riesgo']
+        )
+        
+        # Asegurar tipo string explícitamente antes del groupby
+        if 'id_contraparte' in df_cli_norm.columns:
+            df_cli_norm['id_contraparte'] = df_cli_norm['id_contraparte'].astype(str)
+
         df_clientes_agg = (
-            self.df_clientes.rename(columns={
-                'num_id': 'id_contraparte', 
-                'valor_transaccion': 'valor_suma', 
-                'orden_clasificacion_del_riesgo': 'riesgo'
-            }, errors='ignore')
-            .assign(id_contraparte=lambda x: x['id_contraparte'].astype(str))
+            df_cli_norm
             .groupby(['id_empresa', 'id_contraparte'])
             .agg(
                 cantidad_clientes=('id_contraparte', 'size'),
@@ -41,13 +93,19 @@ class CrucesAnalytics:
         )
         
         # 2. Agregar Proveedores
+        df_pro_norm = self._ensure_columns(
+            self.df_proveedores,
+            'no_documento_de_identidad',
+            ['valor_transaccion', 'valor', 'monto'],
+            ['orden_clasificacion_del_riesgo', 'riesgo', 'nivel_riesgo']
+        )
+        
+        # Asegurar tipo string explícitamente
+        if 'id_contraparte' in df_pro_norm.columns:
+            df_pro_norm['id_contraparte'] = df_pro_norm['id_contraparte'].astype(str)
+
         df_proveedores_agg = (
-            self.df_proveedores.rename(columns={
-                'no_documento_de_identidad': 'id_contraparte', 
-                'valor_transaccion': 'valor_suma', 
-                'orden_clasificacion_del_riesgo': 'riesgo'
-            }, errors='ignore')
-            .assign(id_contraparte=lambda x: x['id_contraparte'].astype(str))
+            df_pro_norm
             .groupby(['id_empresa', 'id_contraparte'])
             .agg(
                 cantidad_proveedores=('id_contraparte', 'size'),
@@ -57,13 +115,19 @@ class CrucesAnalytics:
         )
         
         # 3. Agregar Empleados
+        df_emp_norm = self._ensure_columns(
+            self.df_empleados,
+            'id_empleado',
+            ['valor', 'valor_transaccion', 'monto', 'salario'],
+            ['conteo_alto', 'riesgo', 'nivel_riesgo']
+        )
+        
+        # Asegurar tipo string explícitamente
+        if 'id_contraparte' in df_emp_norm.columns:
+            df_emp_norm['id_contraparte'] = df_emp_norm['id_contraparte'].astype(str)
+
         df_empleados_agg = (
-            self.df_empleados.rename(columns={
-                'id_empleado': 'id_contraparte', 
-                'valor': 'valor_suma', 
-                'conteo_alto': 'riesgo'
-            }, errors='ignore')
-            .assign(id_contraparte=lambda x: x['id_contraparte'].astype(str))
+            df_emp_norm
             .groupby(['id_empresa', 'id_contraparte'])
             .agg(
                 cantidad_empleados=('id_contraparte', 'size'),
@@ -80,6 +144,10 @@ class CrucesAnalytics:
         columnas_cantidad = [col for col in df_resumen.columns if 'cantidad' in col]
         df_resumen[columnas_cantidad] = df_resumen[columnas_cantidad].fillna(0)
         
+        # Llenar valores nulos en columnas de riesgo (CRITICO para evitar NaN en gráficos)
+        columnas_riesgo = [col for col in df_resumen.columns if 'Mayor_riesgo' in col]
+        df_resumen[columnas_riesgo] = df_resumen[columnas_riesgo].fillna(0)
+        
         # Calcular conteo de categorías
         df_resumen['conteo_categorias'] = (
             (df_resumen['cantidad_clientes'] > 0).astype(int) +
@@ -89,26 +157,15 @@ class CrucesAnalytics:
         
         # Filtrar contrapartes con al menos 2 categorías
         df_filtrado = df_resumen[df_resumen['conteo_categorias'] >= 2].copy()
-        
         columnas_suma = [col for col in df_filtrado.columns if 'suma' in col]
         df_filtrado[columnas_suma] = df_filtrado[columnas_suma].fillna(0)
-        
         df_filtrado = df_filtrado.reset_index()
-        
-        # Filtrar por alto riesgo
-        df_final = df_filtrado[
-            (df_filtrado['Mayor_riesgo_clientes'] >= 3) | 
-            (df_filtrado['Mayor_riesgo_proveedores'] >= 3) | 
-            (df_filtrado['Mayor_riesgo_empleados'] == 'Alto')
-        ]
-
+        df_final = df_filtrado
         if self.df_formularios is not None and not self.df_formularios.empty:
             df_final = self._verificar_formularios(df_final)
         else:
             df_final['tiene_formulario'] = False
             df_final['fecha_formulario'] = None
-        pass
-
         self.df_cruces = df_final
         return df_final
     
@@ -257,7 +314,7 @@ class CrucesAnalytics:
         
         empresa_counts = self.df_cruces['id_empresa'].value_counts().head(top_n)
         return [
-            {"empresa": str(emp), "cruces": int(count)}
+            {"empresa": str(emp), "cruces": int(count or 0)}
             for emp, count in empresa_counts.items()
         ]
     
@@ -274,34 +331,41 @@ class CrucesAnalytics:
         for _, row in df.iterrows():
             # Determinar riesgo máximo
             r_cliente = row.get('Mayor_riesgo_clientes', 0)
+            if pd.isna(r_cliente): r_cliente = 0
+            
             r_proveedor = row.get('Mayor_riesgo_proveedores', 0)
+            if pd.isna(r_proveedor): r_proveedor = 0
+            
             r_empleado_str = str(row.get('Mayor_riesgo_empleados', '')).upper()
             r_empleado = 5 if r_empleado_str == 'ALTO' else 0
             
             # Construir info de cliente
             cliente_info = None
-            if row['cantidad_clientes'] > 0:
+            cant_cli = row.get('cantidad_clientes', 0)
+            if pd.notna(cant_cli) and cant_cli > 0:
                 cliente_info = {
-                    "cantidad": int(row['cantidad_clientes']),
-                    "suma": float(row['suma_clientes']),
+                    "cantidad": int(cant_cli),
+                    "suma": float(row.get('suma_clientes', 0) or 0),
                     "riesgo": int(r_cliente)
                 }
             
             # Construir info de proveedor
             proveedor_info = None
-            if row['cantidad_proveedores'] > 0:
+            cant_prov = row.get('cantidad_proveedores', 0)
+            if pd.notna(cant_prov) and cant_prov > 0:
                 proveedor_info = {
-                    "cantidad": int(row['cantidad_proveedores']),
-                    "suma": float(row['suma_proveedores']),
+                    "cantidad": int(cant_prov),
+                    "suma": float(row.get('suma_proveedores', 0) or 0),
                     "riesgo": int(r_proveedor)
                 }
             
             # Construir info de empleado
             empleado_info = None
-            if row['cantidad_empleados'] > 0:
+            cant_emp = row.get('cantidad_empleados', 0)
+            if pd.notna(cant_emp) and cant_emp > 0:
                 empleado_info = {
-                    "cantidad": int(row['cantidad_empleados']),
-                    "suma": float(row['suma_empleados']),
+                    "cantidad": int(cant_emp),
+                    "suma": float(row.get('suma_empleados', 0) or 0),
                     "riesgo": r_empleado_str
                 }
             
@@ -310,8 +374,8 @@ class CrucesAnalytics:
             
             tabla.append({
                 "id_contraparte": str(row['id_contraparte']),
-                "id_empresa": int(row['id_empresa']),
-                "conteo_categorias": int(row['conteo_categorias']),
+                "id_empresa": int(row.get('id_empresa', 0) or 0),
+                "conteo_categorias": int(row.get('conteo_categorias', 0) or 0),
                 "cliente": cliente_info,
                 "proveedor": proveedor_info,
                 "empleado": empleado_info,

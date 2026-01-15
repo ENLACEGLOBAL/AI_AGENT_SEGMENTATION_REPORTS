@@ -9,16 +9,27 @@ import pandas as pd
 
 from src.core.config import settings
 from src.db.repositories.generated_report_repo import GeneratedReportRepository
+from src.db.repositories.sector_ubicacion_analytics_repo import SectorUbicacionAnalyticsRepository
 from src.analytics_modules.sector_ubicacion.sector_geo_analytics import SectorGeoAnalytics
 from src.analytics_modules.sector_ubicacion.graph_generator import GraphGenerator
+from src.analytics_modules.cruces_entidades.cruces_graph_generator import CrucesGraphGenerator
 from src.services.map_image_service import map_image_service
+from src.services.s3_service import s3_service
 from src.db.base import SourceSessionLocal
 
-# Encryption key (should be in environment variables in production)
-ENCRYPTION_KEY = os.getenv('ENCRYPTION_KEY', Fernet.generate_key())
-if isinstance(ENCRYPTION_KEY, str):
-    ENCRYPTION_KEY = ENCRYPTION_KEY.encode()
-cipher_suite = Fernet(ENCRYPTION_KEY)
+import hashlib
+import base64
+
+# Encryption Setup
+# We use JWT_SECRET to derive the Fernet key for compatibility with PHP
+# PHP Logic: if key is not 32 bytes, it hashes it (sha256) to get 32 bytes.
+# Fernet Logic: requires 32 bytes base64-url-encoded.
+JWT_SECRET = os.getenv('JWT_SECRET', 'super-secret')
+# 1. Get 32 bytes raw key
+raw_key = hashlib.sha256(JWT_SECRET.encode()).digest()
+# 2. Encode to base64url for Fernet
+fernet_key = base64.urlsafe_b64encode(raw_key)
+cipher_suite = Fernet(fernet_key)
 
 # Directories
 DATA_PROVISIONAL_DIR = "data_provisional"
@@ -34,6 +45,7 @@ class SectorAnalyticsService:
     
     def __init__(self):
         self.repo = GeneratedReportRepository()
+        self.sector_repo = SectorUbicacionAnalyticsRepository()
     
     def encrypt_path(self, path: str) -> str:
         """Encrypt a file path."""
@@ -61,32 +73,41 @@ class SectorAnalyticsService:
             Dictionary with analytics data and encrypted image path
         """
         try:
-            # 1. Load Transaction Data from CSV (clientes y proveedores)
-            clientes_path = os.path.join(DATA_PROVISIONAL_DIR, "datos prueba clientes.csv")
-            proveedores_path = os.path.join(DATA_PROVISIONAL_DIR, "datos prueba proveedores.csv")
-            if not os.path.exists(clientes_path) and not os.path.exists(proveedores_path):
-                return {
-                    "status": "error",
-                    "message": f"CSV files not found at {clientes_path} and/or {proveedores_path}"
-                }
-            dfs = []
-            if os.path.exists(clientes_path):
-                df_cli = pd.read_csv(clientes_path)
-                df_cli["tipo_contraparte"] = "cliente"
-                dfs.append(df_cli)
-            if os.path.exists(proveedores_path):
-                df_pro = pd.read_csv(proveedores_path)
-                df_pro["tipo_contraparte"] = "proveedor"
-                dfs.append(df_pro)
-            df_csv = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
+            # 1. Load Transaction Data from DB (clientes y proveedores)
+            from src.db.models.cliente import Cliente
+            from src.db.models.proveedor import Proveedor
+            from src.db.models.empleado import Empleado
+            from src.analytics_modules.cruces_entidades.cruces_analytics import CrucesAnalytics
             
-            # Filter by empresa_id
-            df_empresa = df_csv[df_csv['id_empresa'] == empresa_id].copy()
+            # Cargar Clientes
+            query_cli = db.query(Cliente).filter(Cliente.id_empresa == empresa_id)
+            df_cli = pd.read_sql(query_cli.statement, db.bind)
+            if not df_cli.empty:
+                df_cli["tipo_contraparte"] = "cliente"
+                
+            # Cargar Proveedores
+            query_pro = db.query(Proveedor).filter(Proveedor.id_empresa == empresa_id)
+            df_pro = pd.read_sql(query_pro.statement, db.bind)
+            if not df_pro.empty:
+                df_pro["tipo_contraparte"] = "proveedor"
+
+            # Cargar Empleados (Para Cruces)
+            query_emp = db.query(Empleado).filter(Empleado.id_empresa == empresa_id)
+            df_emp = pd.read_sql(query_emp.statement, db.bind)
+            
+            # Concatenar (Solo Clientes y Proveedores para Sector Analytics)
+            dfs = []
+            if not df_cli.empty:
+                dfs.append(df_cli)
+            if not df_pro.empty:
+                dfs.append(df_pro)
+                
+            df_empresa = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
             
             if df_empresa.empty:
                 return {
                     "status": "error",
-                    "message": f"No data found for empresa_id {empresa_id} in CSV"
+                    "message": f"No data found for empresa_id {empresa_id} in Database (clientes/proveedores)"
                 }
 
             # 2. Load Reference Data from DB
@@ -107,17 +128,22 @@ class SectorAnalyticsService:
                 # Drop duplicates from reference table first
                 df_paises_clean = df_paises[['pais', 'clasificacion', 'riesgo', 'calificacion']].drop_duplicates(subset=['pais'])
                 
-                df_empresa = df_empresa.merge(
-                    df_paises_clean, 
-                    on='pais', 
-                    how='left'
-                ).reset_index(drop=True)
-                
-                df_empresa = df_empresa.rename(columns={
-                    'clasificacion': 'pais_clasificacion',
-                    'riesgo': 'pais_riesgo',
-                    'calificacion': 'pais_calificacion'
-                })
+                if 'pais' in df_empresa.columns:
+                    df_empresa = df_empresa.merge(
+                        df_paises_clean, 
+                        on='pais', 
+                        how='left'
+                    ).reset_index(drop=True)
+                    
+                    df_empresa = df_empresa.rename(columns={
+                        'clasificacion': 'pais_clasificacion',
+                        'riesgo': 'pais_riesgo',
+                        'calificacion': 'pais_calificacion'
+                    })
+                else:
+                    # If 'pais' column is missing, we can't enrich with country risk
+                    # Assuming default or skipping
+                    pass
             
             # Merge Jurisdiccion info
             if not df_jurisdicciones.empty:
@@ -262,19 +288,75 @@ class SectorAnalyticsService:
             plt.savefig(image_path, dpi=150, bbox_inches='tight')
             plt.close()
             
-            # Encrypt image path
-            encrypted_image_path = self.encrypt_path(image_path)
+            # Upload image to S3
+            s3_url = None
+            try:
+                with open(image_path, "rb") as img_file:
+                    img_bytes = img_file.read()
+                
+                # Use a specific folder for analytics images in S3
+                s3_key = f"analytics_images/{image_filename}"
+                s3_url = s3_service.upload_file(img_bytes, s3_key, content_type="image/png")
+                
+                if s3_url:
+                    print(f"✅ Image uploaded to S3: {s3_url}")
+                    # Remove local image since it is safely in S3
+                    os.remove(image_path)
+                else:
+                    print("⚠️ S3 Upload failed, keeping local image.")
+            except Exception as e:
+                print(f"⚠️ Error uploading image to S3: {e}")
+
+            # Encrypt image path (Use S3 URL if available, else local path)
+            final_image_path = s3_url if s3_url else image_path
+            encrypted_image_path = self.encrypt_path(final_image_path)
             
             # Generate map images (base64)
             world_map = map_image_service.world_fatf_map(fatf_status)
             colombia_map = map_image_service.colombia_empresa_map(mapa_colombia, empresa_id)
+
+            # Calcular Distribución de Riesgo (Bajo, Medio, Alto)
+            risk_counts = df_empresa['riesgo'].value_counts().to_dict()
+            distribucion_riesgo = {
+                "bajo": int(risk_counts.get('BAJO', 0) + risk_counts.get('bajo', 0)),
+                "medio": int(risk_counts.get('MEDIO', 0) + risk_counts.get('medio', 0)),
+                "alto": int(risk_counts.get('ALTO', 0) + risk_counts.get('alto', 0))
+            }
+
+            # ---------------------------
+            # CRUCES ENTIDADES ANALYTICS
+            # ---------------------------
+            cruces_data = {}
+            try:
+                cruces_analytics = CrucesAnalytics(df_cli, df_pro, df_emp)
+                cruces_analytics.procesar_datos()
+                
+                # Generate Graphs
+                cruces_graph_gen = CrucesGraphGenerator(cruces_analytics)
+                chart_types_b64 = cruces_graph_gen.generate_cross_types_chart()
+                chart_heatmap_b64 = cruces_graph_gen.generate_cruces_heatmap_chart()
+
+                cruces_data = {
+                    "tabla": cruces_analytics.get_tabla_detalles(empresa_id),
+                    "distribucion": cruces_analytics.get_distribucion_riesgo(),
+                    "tipos": cruces_analytics.get_tipos_cruces(),
+                    "kpis": cruces_analytics.get_kpis(),
+                    "chart_types_base64": chart_types_b64,
+                    "chart_heatmap_base64": chart_heatmap_b64
+                }
+            except Exception as e:
+                print(f"⚠️ Error calculando cruces: {e}")
+                cruces_data = {}
 
             # Build comprehensive JSON
             analytics_data = {
                 "empresa_id": empresa_id,
                 "timestamp": timestamp,
                 "kpis": kpis,
+                "distribucion_riesgo": distribucion_riesgo,
+                "entidades_cruces": cruces_data,
                 "mapa_colombia": mapa_colombia,
+                "mapa_global": world_map.get("map_data", []), # Agregar data cruda para mapa global
                 "chart_data": chart_dataset,
                 "fatf_status": fatf_status,
                 "tabla": tabla,
@@ -284,33 +366,44 @@ class SectorAnalyticsService:
                     "chart_donut_base64": chart_base64,
                     "world_fatf_base64": world_map["base64"],
                     "colombia_empresa_base64": colombia_map["base64"],
-                    "chart_donut_path": image_path,
+                    "chart_donut_path": final_image_path,
                     "world_fatf_path": world_map["path"],
                     "colombia_empresa_path": colombia_map["path"]
                 }
             }
             
-            # Save JSON to data_provisional
-            json_filename = f"analytics_{empresa_id}_{timestamp}.json"
-            json_path = os.path.join(DATA_PROVISIONAL_DIR, json_filename)
+            # Save JSON to data_provisional -> REMOVED to avoid local storage redundancy
+            # We use a placeholder for the DB record since the actual data is stored in the data_json column
+            json_path = "STORED_IN_DB_S3"
             
-            with open(json_path, 'w', encoding='utf-8') as f:
-                json.dump(analytics_data, f, ensure_ascii=False, indent=2)
+            # Create a lightweight version for DB (remove heavy base64 strings)
+            analytics_data_db = analytics_data.copy()
+            if "images" in analytics_data_db:
+                analytics_data_db["images"] = {
+                    k: v for k, v in analytics_data_db["images"].items() 
+                    if not k.endswith('base64')
+                }
             
             src_db = SourceSessionLocal()
             try:
                 self.repo.create_report(src_db, encrypted_image_path, empresa_id)
+                self.sector_repo.create(src_db, empresa_id, json_path)
+                # Explicitly update data_json with the lightweight version
+                self.sector_repo.update_data_json(src_db, empresa_id, analytics_data_db)
                 src_db.commit()
             finally:
                 src_db.close()
             
-            print(f"✅ Analytics generated: {json_path}")
-            print(f"✅ Image saved: {image_path}")
+            print(f"✅ Analytics generated (In-Memory/DB)")
+            if s3_url:
+                 print(f"✅ Image saved to S3: {s3_url}")
+            else:
+                 print(f"✅ Image saved locally: {image_path}")
             print(f"✅ Encrypted path stored in database")
             
             return {
                 "status": "success",
-                "json_path": json_path,
+                "json_path": None, # No local file
                 "data": analytics_data
             }
             

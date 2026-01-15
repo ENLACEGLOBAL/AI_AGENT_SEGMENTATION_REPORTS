@@ -17,6 +17,15 @@ from src.db.models.proveedor import Proveedor
 from src.db.models.empleado import Empleado
 from src.db.models.formulario import Formulario
 from src.db.models.reference_tables import HistoricoPaises
+from src.db.repositories.cruces_entidades_analytics_repo import CrucesEntidadesAnalyticsRepository
+from src.db.base import SourceSessionLocal
+
+
+# Directories
+DATA_PROVISIONAL_DIR = "data_provisional"
+GENERATED_IMAGES_DIR = "generated_images"
+os.makedirs(DATA_PROVISIONAL_DIR, exist_ok=True)
+os.makedirs(GENERATED_IMAGES_DIR, exist_ok=True)
 
 
 class CrucesAnalyticsService:
@@ -26,7 +35,8 @@ class CrucesAnalyticsService:
     """
     
     def __init__(self):
-        pass
+        self.repo = CrucesEntidadesAnalyticsRepository()
+
     
 
     def _load_formularios_from_db(
@@ -37,12 +47,26 @@ class CrucesAnalyticsService:
         """
         Carga formularios desde la vista forms_existentes.
         """
-        query = db.query(Formulario)
+        try:
+            query = db.query(Formulario)
 
-        if empresa_id:
-            query = query.filter(Formulario.id_empresa == empresa_id)
+            if empresa_id:
+                query = query.filter(Formulario.id_empresa == empresa_id)
 
-        df = pd.read_sql(query.statement, db.bind)
+            df = pd.read_sql(query.statement, db.bind)
+        except Exception as e:
+            # Check for missing table error (MySQL 1146)
+            if "1146" in str(e) or "doesn't exist" in str(e):
+                print(f"   ⚠️ Vista/Tabla 'forms_existentes' no encontrada. Se omite análisis de formularios.")
+                return pd.DataFrame(columns=[
+                    'id_formulario',
+                    'id_empresa',
+                    'fecha_registro',
+                    'nombre_completo',
+                    'numero_id',
+                    'contraparte'
+                ])
+            raise e
 
         if df.empty:
             return pd.DataFrame(columns=[
@@ -61,6 +85,17 @@ class CrucesAnalyticsService:
         print(f"   ✅ Formularios cargados desde BD: {len(df)} registros")
 
         return df
+
+    def get_active_companies(self, db: Session) -> list[int]:
+        """Obtiene lista de IDs de empresas que tienen datos en la BD."""
+        try:
+            # Consultar IDs únicos de clientes
+            # Nota: Podríamos unir con proveedores/empleados, pero asumimos que si hay clientes, hay actividad
+            result = db.query(Cliente.id_empresa).distinct().all()
+            return [row[0] for row in result if row[0] is not None]
+        except Exception as e:
+            print(f"Error obteniendo empresas activas: {e}")
+            return []
 
     def _load_data_from_db(self, db: Session, empresa_id: Optional[int] = None) -> tuple:
         """
@@ -205,18 +240,19 @@ class CrucesAnalyticsService:
             
             analytics_data = self.clean_nans(analytics_data)
 
-            # 6. Guardar JSON
-            json_filename = f"cruces_analytics_{empresa_id if empresa_id else 'all'}_{timestamp}.json"
-            json_path = os.path.join(DATA_PROVISIONAL_DIR, json_filename)
-            
-            with open(json_path, 'w', encoding='utf-8') as f:
-                json.dump(analytics_data, f, ensure_ascii=False, indent=2)
-            
-            print(f"✅ Analytics guardado: {json_path}")
+            db_json_path = "STORED_IN_DB"
+            src_db = SourceSessionLocal()
+            try:
+                json_str = json.dumps(analytics_data, ensure_ascii=False)
+                self.repo.create(src_db, empresa_id, db_json_path, data_json=json_str)
+            finally:
+                src_db.close()
+
+            print("✅ Analytics guardado en base de datos")
             
             return {
                 "status": "success",
-                "json_path": json_path,
+                "json_path": None,
                 "data": analytics_data
             }
             

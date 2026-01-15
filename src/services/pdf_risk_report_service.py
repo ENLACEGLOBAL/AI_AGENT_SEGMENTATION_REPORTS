@@ -1,623 +1,1152 @@
-"""
-PDF Risk Report Service
-Generates detailed PDF risk classification reports with weighted scoring
-"""
+# PDF Risk Report Service (Refactor Profesional)
+# Diseño ejecutivo en 3 páginas: Visión / Decisión / Análisis
+# Autor: Refactor técnico
+
 import json
-import pandas as pd
-from typing import Dict, Any
-from datetime import datetime
 import os
-from reportlab.lib.pagesizes import letter
+import base64
+import io
+import hashlib
+from datetime import datetime
+from typing import Dict, Any, Optional
+
+from cryptography.fernet import Fernet
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image, KeepInFrame
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
-from reportlab.graphics.shapes import Drawing, Circle, String, Rect, Line
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
+from reportlab.platypus import (
+    SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer,
+    PageBreak, Image, KeepInFrame
+)
+from reportlab.graphics.shapes import Drawing, Circle, String, Rect
+from src.analytics_modules.cruces_entidades.cruces_analytics import CrucesAnalytics
+from src.analytics_modules.cruces_entidades.cruces_graph_generator import CrucesGraphGenerator
+from src.services.local_ai_report_service import local_ai_report_service
+from src.services.map_image_service import map_image_service
+from src.db.base import TargetSessionLocal
+from src.db.repositories.generated_report_repo import GeneratedReportRepository
+from src.services.s3_service import s3_service
+
+# --------------------
+# Paleta corporativa (Basada en Logo)
+# --------------------
+COLORS = {
+    'primary': colors.HexColor('#00a19c'),   # Turquesa Corporativo
+    'secondary': colors.HexColor('#005fa3'), # Azul complementario
+    'success': colors.HexColor('#2a9d8f'),
+    'warning': colors.HexColor('#f0b323'),   # Amarillo Corporativo
+    'danger': colors.HexColor('#e40046'),    # Magenta Corporativo
+    'info': colors.HexColor('#457b9d'),
+    'light': colors.HexColor('#f8f9fa'),
+    'gray': colors.HexColor('#6c757d'),
+    'dark': colors.HexColor('#343a40'),
+    'purple': colors.HexColor('#7c3aed'),
+}
 
 
 class PDFRiskReportService:
-    """Service for generating PDF risk classification reports."""
-    
-    # Risk criteria weights (must sum to ~100%)
-    CRITERIA_WEIGHTS = {
-        'pais': 0.11,           # 11%
-        'jurisdiccion': 0.06,   # 6%
-        'ciiu': 0.10,           # 10%
-        'tipo_persona': 0.05,   # 5%
-        'medio_pago': 0.08,     # 8%
-        'monto_efectivo': 0.10, # 10%
-        'valor_10pct': 0.10,    # 10%
-        'tipo_relacion': 0.08,  # 8%
-        'localizacion': 0.09    # 9%
-    }
-    
+    """Generador profesional de reportes PDF de riesgo (nivel corporativo)."""
+
+    # --------------------
+    # API pública
+    # --------------------
     def generate_pdf_report(
         self,
-        analytics_json_path: str,
+        analytics_json_path: Optional[str] = None,
+        analytics_data: Optional[Dict[str, Any]] = None,
         tipo_contraparte: str = "cliente",
-        output_path: str = None
+        output_path: Optional[str] = None
     ) -> Dict[str, Any]:
-        """
-        Generate PDF risk classification report.
-        
-        Args:
-            analytics_json_path: Path to analytics JSON
-            tipo_contraparte: "cliente" or "proveedor"
-            output_path: Optional output path
-            
-        Returns:
-            Dict with status and file path
-        """
-        try:
-            # Load analytics
+
+        analytics = {}
+        if analytics_data:
+            analytics = analytics_data
+        elif analytics_json_path:
             with open(analytics_json_path, 'r', encoding='utf-8') as f:
                 analytics = json.load(f)
-            
-            empresa_id = analytics.get('empresa_id')
+        else:
+            raise ValueError("Must provide either analytics_json_path or analytics_data")
 
-            clientes_path = os.path.join("data_provisional", "datos prueba clientes.csv")
-            proveedores_path = os.path.join("data_provisional", "datos prueba proveedores.csv")
-            empleados_path = os.path.join("data_provisional", "datos prueba.csv")
-            dfs = []
-            df_clientes = pd.DataFrame()
-            df_proveedores = pd.DataFrame()
-            df_empleados = pd.DataFrame()
-            if os.path.exists(clientes_path):
-                df_clientes = pd.read_csv(clientes_path)
-                df_clientes["tipo_contraparte"] = "cliente"
-                dfs.append(df_clientes)
-            if os.path.exists(proveedores_path):
-                df_proveedores = pd.read_csv(proveedores_path)
-                df_proveedores["tipo_contraparte"] = "proveedor"
-                dfs.append(df_proveedores)
-            if os.path.exists(empleados_path):
-                df_empleados = pd.read_csv(empleados_path)
-                df_empleados["tipo_contraparte"] = df_empleados.get("tipo_contraparte", "empleado")
-            df = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
-            
-            # Filter for company and high risk
-            df_empresa = df[df['id_empresa'] == empresa_id]
-
-            # Enrich with reference tables for country classification
+        empresa_id = analytics.get('empresa_id')
+        entidades_cruces = analytics.get('entidades_cruces', None)
+        
+        if not empresa_id and analytics_json_path:
+            # Fallback: Intentar extraer ID del nombre del archivo
+            # Formato esperado: analytics_ID_TIMESTAMP.json o similar
             try:
-                from src.db.base import target_engine as engine
-                from src.db.models.reference_tables import HistoricoPaises
-                paises = pd.read_sql_table(HistoricoPaises.__tablename__, con=engine)
-                paises = paises[['pais', 'clasificacion']].drop_duplicates()
-                df_empresa = (
-                    df_empresa.merge(paises, on='pais', how='left')
-                    .rename(columns={'clasificacion': 'pais_clasificacion'})
-                )
+                basename = os.path.basename(analytics_json_path)
+                parts = basename.split('_')
+                for part in parts:
+                    if part.isdigit():
+                        empresa_id = int(part)
+                        break
             except Exception:
                 pass
-            
-            risk_col = 'nivel_riesgo' if 'nivel_riesgo' in df.columns else 'riesgo'
-            
-            # Normalize risk values and include NO COOPERANTE / PARAISO FISCAL as alto
-            if not df_empresa.empty:
-                riesgo_series = df_empresa[risk_col]
-                if isinstance(riesgo_series, pd.DataFrame):
-                    riesgo_series = riesgo_series.iloc[:, 0]
-                riesgo_series = riesgo_series.astype(str).str.upper()
-                df_empresa[risk_col] = riesgo_series
-                pais_is_high = False
-                if 'pais_clasificacion' in df_empresa.columns:
-                    tmp = df_empresa['pais_clasificacion']
-                    if isinstance(tmp, pd.DataFrame):
-                        tmp = tmp.iloc[:, 0]
-                    pais_col = tmp.astype(str).str.upper()
-                    pais_is_high = pais_col.isin(['NO COOPERANTE', 'PARAISO FISCAL'])
-                riesgo_is_high = riesgo_series.isin(['ALTO', 'EXTREMO', 'CRITICO'])
-                mask = riesgo_is_high | (pais_is_high if isinstance(pais_is_high, pd.Series) else False)
-                df_alto = df_empresa[mask]
-            else:
-                df_alto = pd.DataFrame()
-            
-            # If no high risk, we still generate a report but with "No Alerts" status
-            # if df_alto.empty:
-            #     return {
-            #         'status': 'error',
-            #         'message': f'No high-risk transactions for company {empresa_id}'
-            #     }
-            
-            # Calculate risk scores for each transaction
-            risk_scores = []
-            for _, row in df_alto.iterrows():
-                score = self._calculate_risk_score(row)
-                risk_scores.append(score)
-            
-            # Get average risk score
-            avg_score = sum(risk_scores) / len(risk_scores) if risk_scores else 0.0
-            
-            # Determine risk level
-            if df_alto.empty:
-                risk_level = "RIESGO BAJO (SIN ALERTAS)"
-            else:
-                risk_level = self._get_risk_level(avg_score)
-            
-            # Generate PDF
-            if output_path is None:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                from os import makedirs
-                from os.path import join
-                makedirs("data_provisional/reports", exist_ok=True)
-                output_path = join("data_provisional", "reports", f"pdf_risk_report_{tipo_contraparte}_{empresa_id}_{timestamp}.pdf")
-            
-            self._create_pdf(
-                output_path=output_path,
-                empresa_id=empresa_id,
-                tipo_contraparte=tipo_contraparte,
-                df_alto=df_alto,
-                avg_score=avg_score,
-                risk_level=risk_level,
-                high_risk_count=len(df_alto),
-                analytics=analytics,
-                df_all=df,
-                df_clientes=df_clientes,
-                df_proveedores=df_proveedores,
-                df_empleados=df_empleados
-            )
-            
-            return {
-                'status': 'success',
-                'file_path': output_path,
-                'empresa_id': empresa_id,
-                'risk_level': risk_level,
-                'avg_score': round(avg_score, 2),
-                'high_risk_count': len(df_alto)
-            }
-            
-        except Exception as e:
-            return {
-                'status': 'error',
-                'message': str(e)
-            }
-    
-    def _calculate_risk_score(self, row: pd.Series) -> float:
-        """Calculate weighted risk score for a transaction."""
-        score = 0.0
+
+        if not empresa_id:
+            raise ValueError("empresa_id no encontrado en JSON ni en nombre de archivo")
+
+        df_all, df_clientes, df_proveedores, df_empleados = self._load_dataframes()
+        df_empresa = df_all[df_all['id_empresa'] == empresa_id].copy()
+
+        df_alto = self._filter_high_risk(df_empresa)
+        avg_score = self._avg_score(df_alto)
+        risk_level = self._get_risk_level(avg_score)
+
+        # ---------------------------------------------------------
+        # MODIFICADO: Generar en Memoria (BytesIO) - No guardar en disco
+        # ---------------------------------------------------------
+        buffer = io.BytesIO()
         
-        # País (11%)
-        if row.get('pais_clasificacion') == 'NO COOPERANTE':
-            score += self.CRITERIA_WEIGHTS['pais'] * 4  # Extremo
-        elif row.get('pais_clasificacion') == 'PARAISO FISCAL':
-            score += self.CRITERIA_WEIGHTS['pais'] * 4  # Extremo
+        # Generar PDF en el buffer
+        self._build_pdf(
+            buffer,  # Pasamos el buffer en lugar de un path
+            empresa_id,
+            df_all,
+            df_alto,
+            avg_score,
+            risk_level,
+            df_clientes,
+            df_proveedores,
+            df_empleados,
+            entidades_cruces=entidades_cruces
+        )
+        
+        # Obtener bytes del buffer
+        pdf_bytes = buffer.getvalue()
+        buffer.close()
+
+        # Opcional: guardar copia local si se solicita (modo demo/validación)
+        local_file = None
+        if output_path:
+            try:
+                os.makedirs(os.path.dirname(output_path), exist_ok=True)
+                with open(output_path, "wb") as f:
+                    f.write(pdf_bytes)
+                local_file = output_path
+                print(f"✅ Copia local del PDF guardada en: {local_file}")
+            except Exception as e:
+                print(f"⚠️ No se pudo guardar copia local: {e}")
+
+        # Intentar subir a S3
+        filename = f"Reporte_{empresa_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        s3_url = s3_service.upload_file(pdf_bytes, filename)
+
+        pdf_content_to_store = pdf_bytes
+        if s3_url:
+            virtual_path = s3_url
+            pdf_content_to_store = None # Optimization: Don't store BLOB if S3 worked
         else:
-            score += self.CRITERIA_WEIGHTS['pais'] * float(row.get('valor_riesgo_pais', 0))
-        
-        # Jurisdicción (6%)
-        score += self.CRITERIA_WEIGHTS['jurisdiccion'] * float(row.get('valor_jurisdicciones', 0))
-        
-        # CIIU (10%)
-        score += self.CRITERIA_WEIGHTS['ciiu'] * float(row.get('valor_riesgo_ciiu', 0))
-        
-        # Tipo persona (5%)
-        score += self.CRITERIA_WEIGHTS['tipo_persona'] * float(row.get('valor_riesgo_tipo_persona', 0))
-        
-        # Medio de pago (8%)
-        score += self.CRITERIA_WEIGHTS['medio_pago'] * float(row.get('valor_riesgo_medio_pago', 0))
-        
-        # Monto + Efectivo (10%)
-        score += self.CRITERIA_WEIGHTS['monto_efectivo'] * float(row.get('valor_riesgo_montos', 0))
-        
-        # Valor > 10% promedio (10%)
-        score += self.CRITERIA_WEIGHTS['valor_10pct'] * float(row.get('valor_riesgo_valor_mas_10pct', 0))
-        
-        # Tipo relación (8%) - For providers
-        if 'valor_riesgo_relacion' in row:
-            score += self.CRITERIA_WEIGHTS['tipo_relacion'] * float(row.get('valor_riesgo_relacion', 0))
-        
-        # Localización (9%) - For providers
-        if 'valor_riesgo_localizacion' in row:
-            score += self.CRITERIA_WEIGHTS['localizacion'] * float(row.get('valor_riesgo_localizacion', 0))
-        
-        return score
-    
-    def _get_risk_level(self, score: float) -> str:
-        """Determine risk level from score."""
-        if score >= 3.0:
-            return "RIESGO EXTREMO"
-        elif score >= 2.0:
-            return "RIESGO ALTO"
-        elif score >= 1.0:
-            return "RIESGO MEDIO"
-        else:
-            return "RIESGO BAJO"
-    
-    def _create_pdf(
-        self,
-        output_path: str,
-        empresa_id: int,
-        tipo_contraparte: str,
-        df_alto: pd.DataFrame,
-        avg_score: float,
-        risk_level: str,
-        high_risk_count: int,
-        analytics: Dict[str, Any],
-        df_all: pd.DataFrame,
-        df_clientes: pd.DataFrame | None = None,
-        df_proveedores: pd.DataFrame | None = None,
-        df_empleados: pd.DataFrame | None = None
-    ):
-        """Create the PDF document with AI narratives."""
-        from src.services.local_ai_report_service import local_ai_report_service
-        import matplotlib.pyplot as plt
-        import os
-        import io
-        import base64
-        from src.analytics_modules.cruces_entidades.cruces_analytics import CrucesAnalytics
-        from src.analytics_modules.cruces_entidades.cruces_graph_generator import CrucesGraphGenerator
-        
-        # Generate AI Content
-        # Create synthetic analytics for the AI service
-        ai_input = {
-            "empresa_id": empresa_id,
-            "kpis": {
-                "total_transacciones": len(df_alto),
-                "monto_total": float(df_alto['valor_transaccion'].sum()),
-                "empresas_involucradas": df_alto['num_id'].nunique() if 'num_id' in df_alto else 0
-            },
-            "fatf_status": {row['pais']: row.get('pais_clasificacion', 'UNKNOWN') for _, row in df_alto.iterrows() if pd.notna(row.get('pais'))}
+            # Fallback a almacenamiento solo en BD (BLOB)
+            virtual_path = f"DB_STORED:{filename}"
+
+        # Guardar en Base de Datos (BLOB + Path)
+        self._save_to_db(empresa_id, virtual_path, pdf_content_to_store)
+
+        return {
+            'status': 'success',
+            'file': virtual_path,
+            'empresa_id': empresa_id,
+            'risk_level': risk_level,
+            'score': round(avg_score, 2),
+            'local_file': local_file
         }
-        ai_report = local_ai_report_service.generate_report(ai_input)
-        ai_sections = ai_report['report']['sections']
 
-        doc = SimpleDocTemplate(output_path, pagesize=letter)
+    def _save_to_db(self, empresa_id: int, file_path: str, pdf_bytes: Optional[bytes]):
+        """Guarda el contenido del PDF en la base de datos."""
+        try:
+            # 1. Preparar Key (Prioridad: ENCRYPTION_KEY > JWT_SECRET)
+            enc_key = os.getenv('ENCRYPTION_KEY')
+            if enc_key:
+                cipher = Fernet(enc_key)
+            else:
+                jwt_secret = os.getenv('JWT_SECRET', 'super-secret')
+                raw_key = hashlib.sha256(jwt_secret.encode()).digest()
+                fernet_key = base64.urlsafe_b64encode(raw_key)
+                cipher = Fernet(fernet_key)
+
+            # 2. Encriptar path (aunque sea virtual, lo mantenemos por consistencia)
+            encrypted_path = cipher.encrypt(file_path.encode()).decode()
+
+            # 3. Guardar en DB
+            db = TargetSessionLocal()
+            try:
+                repo = GeneratedReportRepository()
+                repo.create_report(
+                    db, 
+                    file_path=encrypted_path, 
+                    company_id=empresa_id,
+                    pdf_content=pdf_bytes
+                )
+                
+                storage_type = "S3 (Path Only)" if pdf_bytes is None else "BLOB (Fallback)"
+                print(f"✅ Reporte registrado en DB para empresa {empresa_id}. Storage: {storage_type}")
+            finally:
+                db.close()
+        except Exception as e:
+            print(f"⚠️ Error guardando reporte en DB: {e}")
+
+    # --------------------
+    # Construcción PDF
+    # --------------------
+    def _build_pdf(self, output, empresa_id, df_all, df_alto, avg_score, risk_level,
+                   df_clientes, df_proveedores, df_empleados, entidades_cruces=None):
+
+        doc = SimpleDocTemplate(
+            output,
+            pagesize=letter,
+            leftMargin=0.5 * inch,
+            rightMargin=0.5 * inch,
+            topMargin=0.4 * inch,
+            bottomMargin=0.4 * inch
+        )
+
+        styles = self._styles()
         story = []
-        styles = getSampleStyleSheet()
-        
-        # Custom styles
-        title_style = ParagraphStyle(
-            'CustomTitle',
-            parent=styles['Heading1'],
-            fontSize=18,
-            textColor=colors.HexColor('#1b263b'),
-            spaceAfter=30,
-            alignment=TA_CENTER
-        )
-        
-        heading_style = ParagraphStyle(
-            'CustomHeading',
-            parent=styles['Heading2'],
-            fontSize=14,
-            textColor=colors.HexColor('#415a77'),
-            spaceAfter=12,
-            spaceBefore=12
-        )
-        
-        normal_style = styles['Normal']
-        
-        # Company logo
-        try:
-            logo_path = r"C:\Users\Usuario\AI_AGENT_SEGMENTATION_REPORTS\Logo.png"
-            if os.path.exists(logo_path):
-                story.append(Image(logo_path, width=2.8*inch, height=0.8*inch))
-                story.append(Spacer(1, 0.15*inch))
-        except Exception:
-            pass
-        
-        story.append(Paragraph(
-            "REPORTE DE CLASIFICACIÓN DE RIESGO Y ALERTA EXTREMA (CLIENTES Y PROVEEDORES)",
-            title_style
-        ))
-        story.append(Spacer(1, 0.2*inch))
-        
-        # Página 1: Header + Panel + Distribución + Departamentos + Sector-Ubicación
 
-        try:
-            story.append(Paragraph("Panel Ejecutivo de Distribución de Riesgo", heading_style))
-            data_all = df_all[df_all['id_empresa'] == empresa_id].copy() if isinstance(df_all, pd.DataFrame) else pd.DataFrame()
-            total_registros = int(len(data_all))
-            alto_count = int(len(df_alto))
-            pct_alto = round((alto_count / max(total_registros, 1)) * 100, 2)
-            avg5 = round((avg_score / 3.0) * 5.0, 1)
-            nivel_txt = "crítico" if avg_score >= 2.5 else ("alto" if avg_score >= 2.0 else ("medio" if avg_score >= 1.0 else "bajo"))
-            nivel_color = '#e63946' if avg_score >= 2.5 else ('#fb8500' if avg_score >= 2.0 else ('#ffbe0b' if avg_score >= 1.0 else '#2a9d8f'))
-            def _badge(txt: str, bg: colors.Color) -> Drawing:
-                d = Drawing(56, 56)
-                d.add(Circle(29, 27, 22, fillColor=colors.HexColor('#e6ebf1'), strokeColor=colors.HexColor('#e6ebf1')))
-                d.add(Circle(28, 28, 22, fillColor=bg, strokeColor=colors.whitesmoke, strokeWidth=2))
-                d.add(String(28, 28, txt, textAnchor='middle', fillColor=colors.whitesmoke, fontSize=13, fontName='Helvetica-Bold'))
-                return d
-            b1 = _badge(str(total_registros), colors.HexColor('#3a86ff'))
-            b2 = _badge(str(alto_count), colors.HexColor('#ffbe0b'))
-            b3 = _badge(f"{avg5}", colors.HexColor('#8338ec'))
-            b4 = _badge(f"{pct_alto:.0f}%", colors.HexColor('#e63946'))
-            c1_text = Paragraph(f"<font size=9 color='#6c757d'><b>Total Registros</b></font><br/><font size=15 color='#1b263b'><b>{total_registros:,}</b></font><br/><font size=8 color='#6c757d'>Analizados en el período</font>", styles['BodyText'])
-            c2_text = Paragraph(f"<font size=9 color='#6c757d'><b>Contrapartes con Cruces</b></font><br/><font size=15 color='#1b263b'><b>{alto_count}</b></font><br/><font size=8 color='#6c757d'>{pct_alto:.2f}% del total</font>", styles['BodyText'])
-            c3_text = Paragraph(f"<font size=9 color='#6c757d'><b>Riesgo Promedio</b></font><br/><font size=15 color='#1b263b'><b>{avg5}/5.0</b></font><br/><font size=8 color='{nivel_color}'>Nivel {nivel_txt}</font>", styles['BodyText'])
-            c4_text = Paragraph(f"<font size=9 color='#6c757d'><b>Alto riesgo</b></font><br/><font size=15 color='#1b263b'><b>{alto_count}</b></font><br/><font size=8 color='#6c757d'>{pct_alto:.0f}% requiere acción inmediata</font>", styles['BodyText'])
-            card_w = (7.5*inch) / 4
-            badge_w = 0.7*inch
-            text_w = card_w - badge_w - 0.1*inch
-            c1 = Table([[b1, KeepInFrame(text_w, 0.8*inch, content=[c1_text], hAlign='LEFT')]], colWidths=[badge_w, text_w])
-            c2 = Table([[b2, KeepInFrame(text_w, 0.8*inch, content=[c2_text], hAlign='LEFT')]], colWidths=[badge_w, text_w])
-            c3 = Table([[b3, KeepInFrame(text_w, 0.8*inch, content=[c3_text], hAlign='LEFT')]], colWidths=[badge_w, text_w])
-            c4 = Table([[b4, KeepInFrame(text_w, 0.8*inch, content=[c4_text], hAlign='LEFT')]], colWidths=[badge_w, text_w])
-            for card in (c1, c2, c3, c4):
-                card.setStyle(TableStyle([
-                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                    ('LEFTPADDING', (0, 0), (-1, -1), 8),
-                    ('RIGHTPADDING', (0, 0), (-1, -1), 8),
-                    ('TOPPADDING', (0, 0), (-1, -1), 6),
-                    ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-                ]))
-            panel = Table([[c1, c2, c3, c4]], colWidths=[(7.5*inch)/4]*4)
-            panel.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#f8fafc')),
-                ('BOX', (0, 0), (-1, -1), 1, colors.HexColor('#d9dee7')),
-                ('INNERGRID', (0, 0), (-1, -1), 0.8, colors.HexColor('#e3e7ee')),
-                ('LEFTPADDING', (0, 0), (-1, -1), 10),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 10),
-                ('TOPPADDING', (0, 0), (-1, -1), 10),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
-            ]))
-            story.append(panel)
-            story.append(Spacer(1, 0.2*inch))
-        except Exception as _:
-            story.append(Paragraph("No fue posible renderizar el panel ejecutivo de distribución.", normal_style))
-            story.append(Spacer(1, 0.2*inch))
+        # ================= PAGE 1: EXECUTIVE SUMMARY & GEOGRAPHY =================
+        # 1. Header Compacto (Logo + Título)
+        self._cover_compact(story, styles, empresa_id)
+        
+        # 2. KPIs Globales
+        self._kpi_panel(story, styles, df_all, empresa_id, df_clientes, df_proveedores, df_empleados)
+        
+        # 3. Mapas (Geografía) - Side by Side
+        self._risk_region_country(story, styles, df_all, empresa_id)
 
-        try:
-            story.append(Paragraph("Distribución por Nivel de Riesgo", heading_style))
-            risk_col_name = 'nivel_riesgo' if 'nivel_riesgo' in df_all.columns else 'riesgo'
-            df_emp = df_all[df_all['id_empresa'] == empresa_id].copy() if isinstance(df_all, pd.DataFrame) else pd.DataFrame()
-            dist = {'BAJO': 0, 'MEDIO': 0, 'ALTO': 0}
-            if not df_emp.empty and risk_col_name in df_emp.columns:
-                s = df_emp[risk_col_name]
-                if isinstance(s, pd.DataFrame):
-                    s = s.iloc[:, 0]
-                s = s.astype(str).str.upper()
-                for k in dist.keys():
-                    dist[k] = int((s == k).sum())
-            total = max(sum(dist.values()), 1)
-            def rowDots(n: int, fill: colors.Color) -> Drawing:
-                d = Drawing(300, 24)
-                count = max(1, min(12, n if n > 0 else int((n/total)*12)))
-                for i in range(count):
-                    d.add(Circle(12 + i*24, 12, 6, fillColor=fill, strokeColor=fill))
-                return d
-            d_bajo = rowDots(dist['BAJO'], colors.HexColor('#2a9d8f'))
-            d_medio = rowDots(dist['MEDIO'], colors.HexColor('#ffbe0b'))
-            d_alto = rowDots(dist['ALTO'], colors.HexColor('#e63946'))
-            t_dist = Table([
-                [Paragraph("<b>Bajo</b>", styles['BodyText']), d_bajo],
-                [Paragraph("<b>Medio</b>", styles['BodyText']), d_medio],
-                [Paragraph("<b>Alto</b>", styles['BodyText']), d_alto],
-            ], colWidths=[1.2*inch, 5.3*inch])
-            t_dist.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#f8fafc')),
-                ('BOX', (0, 0), (-1, -1), 1, colors.HexColor('#d9dee7')),
-                ('INNERGRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e3e7ee')),
-                ('LEFTPADDING', (0, 0), (-1, -1), 10),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 10),
-                ('TOPPADDING', (0, 0), (-1, -1), 8),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
-            ]))
-            story.append(t_dist)
-            story.append(Spacer(1, 0.2*inch))
-        except Exception as _:
-            story.append(Paragraph("No fue posible renderizar la distribución por nivel de riesgo.", normal_style))
-            story.append(Spacer(1, 0.2*inch))
-
-        try:
-            story.append(Paragraph("Departamentos con Mayor Riesgo", heading_style))
-            deps_counts = {}
-            for _, r in df_alto.iterrows():
-                dep = str(r.get('departamento', '') or '')
-                if dep:
-                    deps_counts[dep] = deps_counts.get(dep, 0) + 1
-            top5 = sorted(deps_counts.items(), key=lambda x: x[1], reverse=True)[:5]
-            bars = []
-            maxv = max([v for _, v in top5] + [1])
-            for i, (dep, v) in enumerate(top5, start=1):
-                w = int((v / maxv) * 280)
-                d = Drawing(320, 22)
-                d.add(Rect(30, 6, 280, 10, fillColor=colors.HexColor('#e6ebf1'), strokeColor=colors.HexColor('#e6ebf1')))
-                d.add(Rect(30, 6, w, 10, fillColor=colors.HexColor('#00b4d8'), strokeColor=colors.HexColor('#00b4d8')))
-                d.add(String(10, 6, f"{i}", fontSize=9, fillColor=colors.HexColor('#1b263b')))
-                d.add(String(320, 6, str(v), textAnchor='end', fontSize=9, fillColor=colors.HexColor('#6c757d')))
-                bars.append([KeepInFrame(2.6*inch, 0.3*inch, content=[Paragraph(dep, styles['BodyText'])], hAlign='LEFT'), d])
-            if not bars:
-                bars = [[Paragraph("Sin datos", styles['BodyText']), Paragraph("", styles['BodyText'])]]
-            t_bars = Table(bars, colWidths=[2.6*inch, 4.9*inch])
-            t_bars.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#f8fafc')),
-                ('BOX', (0, 0), (-1, -1), 1, colors.HexColor('#d9dee7')),
-                ('LEFTPADDING', (0, 0), (-1, -1), 10),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 10),
-                ('TOPPADDING', (0, 0), (-1, -1), 8),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
-            ]))
-            story.append(t_bars)
-            story.append(Spacer(1, 0.2*inch))
-        except Exception as _:
-            story.append(Paragraph("No fue posible renderizar los departamentos con mayor riesgo.", normal_style))
-            story.append(Spacer(1, 0.2*inch))
-
+        story.append(Spacer(1, 0.2 * inch))
+        story.append(Paragraph("<b>Interpretación de Gráficas:</b> El <b>Mapa de Colombia</b> destaca regiones con mayor concentración de operaciones riesgosas. El <b>Mapa Mundial</b> indica la clasificación FATF de las contrapartes internacionales (ej. países no cooperantes).", styles['FooterText']))
         story.append(PageBreak())
         
-        # Página 2: Cruces + Recomendaciones + Alertas
-        story.append(Paragraph("Cruces de Entidades (Clientes, Proveedores y Empleados)", heading_style))
-        try:
-            df_cli_emp = (df_clientes[df_clientes['id_empresa'] == empresa_id].copy() if isinstance(df_clientes, pd.DataFrame) else pd.DataFrame())
-            df_pro_emp = (df_proveedores[df_proveedores['id_empresa'] == empresa_id].copy() if isinstance(df_proveedores, pd.DataFrame) else pd.DataFrame())
-            df_emp_emp = (df_empleados[df_empleados['id_empresa'] == empresa_id].copy() if isinstance(df_empleados, pd.DataFrame) else pd.DataFrame())
-            cruces = CrucesAnalytics(df_cli_emp, df_pro_emp, df_emp_emp)
-            df_cru = cruces.procesar_datos()
-            gg = CrucesGraphGenerator(cruces)
-            chart_b64 = gg.generate_composite_dashboard_chart() if not df_cru.empty else gg.generate_cruces_heatmap_chart()
-            if chart_b64:
-                b64 = chart_b64.split(",", 1)[1] if chart_b64.startswith("data:image") else chart_b64
-                data = base64.b64decode(b64)
-                img = Image(io.BytesIO(data), width=7.5*inch, height=5.5*inch)
-                story.append(img)
-                story.append(Spacer(1, 0.2*inch))
-        except Exception:
-            story.append(Paragraph("No fue posible renderizar los cruces de entidades.", normal_style))
-            story.append(Spacer(1, 0.2*inch))
-        expl = Table([
-            [Paragraph("<b>Cómo leer estos gráficos</b>", styles['BodyText'])],
-            [Paragraph("• Bajo (1–2): exposición limitada y controles suficientes. • Medio (3): requiere seguimiento. • Alto (4–5): requiere acción inmediata.", styles['BodyText'])],
-            [Paragraph("• Cruce: misma contraparte aparece como Cliente, Proveedor y/o Empleado; incrementa riesgo por conflicto de interés.", styles['BodyText'])]
-        ], colWidths=[7.5*inch])
-        expl.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#f8fafc')),
-            ('BOX', (0, 0), (-1, -1), 1, colors.HexColor('#d9dee7')),
-            ('LEFTPADDING', (0, 0), (-1, -1), 10),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 10),
-            ('TOPPADDING', (0, 0), (-1, -1), 8),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
-        ]))
-        story.append(expl)
-        story.append(Spacer(1, 0.15*inch))
-        story.append(Paragraph("RECOMENDACIONES (IA)", heading_style))
-        story.append(Paragraph(ai_sections['recommendations'], normal_style))
+        # ================= PAGE 2: ENTITY CROSSES ANALYSIS =================
+        # 4. Cruces de Entidades (Full Page)
+        self._entity_crosses_page_full(story, styles, empresa_id, df_clientes, df_proveedores, df_empleados, entidades_cruces)
 
-        # Alertas Detalladas
-        story.append(Spacer(1, 0.2*inch))
-        story.append(Paragraph("ALERTAS DETECTADAS", heading_style))
-        if high_risk_count == 0:
-            story.append(Paragraph("No se registran transacciones de alto riesgo.", normal_style))
+        # Footer Simple
+        story.append(Spacer(1, 0.2 * inch))
+        story.append(Paragraph("<b>Interpretación de Gráficas:</b> <b>Gráfica Circular:</b> Muestra la proporción de los diferentes tipos de conflictos (ej. Cliente-Proveedor). <b>Dashboard:</b> Panel detallado con indicadores de severidad (Gauges) y barras de progreso por tipología.", styles['FooterText']))
+        story.append(Paragraph("<b>Nota:</b> Reporte elaborado con <b>uso de analítica especializada</b>; consolida la exposición geográfica y el riesgo de colusión.",
+                               styles['FooterText']))
+        
+        doc.build(story)
+
+    def _entity_crosses_page_full(self, story, styles, empresa_id, df_clientes, df_proveedores, df_empleados, entidades_cruces=None):
+        story.append(Paragraph("Análisis de Cruces de Entidades (Colusión)", styles['CustomTitle']))
+        story.append(Paragraph("Detección de cruces entre contrapartes (solo se detectan cruces).", styles['CustomMeta']))
+        story.append(Spacer(1, 0.2 * inch))
+
+        try:
+            if entidades_cruces:
+                # Use precomputed data
+                dist = entidades_cruces.get('distribucion', {})
+                tabla = entidades_cruces.get('tabla', [])
+                total_cruces_calc = sum(int(v) for v in dist.values())
+                
+                # Check if we have graphs
+                b64_types = entidades_cruces.get('chart_types_base64')
+                b64_heat = entidades_cruces.get('chart_heatmap_base64')
+                
+            else:
+                # Fallback to CSV processing (legacy/backup)
+                analytics = CrucesAnalytics(df_clientes, df_proveedores, df_empleados)
+                df_cruces = analytics.procesar_datos()
+                dist = analytics.get_distribucion_riesgo()
+                tabla = analytics.get_tabla_detalles(empresa_id)
+                total_cruces_calc = len(df_cruces)
+                
+                # Graphs generation on the fly
+                gen = CrucesGraphGenerator(analytics)
+                b64_types = gen.generate_cross_types_chart()
+                b64_heat = gen.generate_cruces_heatmap_chart()
+
+            # 1. Metricas Principales (Row)
+            self._metric_row(story, styles, [
+                (str(total_cruces_calc), 'Entidades', 'con Cruces', COLORS['info']),
+                (str(dist.get('alto', 0)), 'Riesgo Alto', 'Alerta Extrema', COLORS['danger']),
+                (str(dist.get('medio', 0)), 'Riesgo Medio', 'Seguimiento', COLORS['warning']),
+                (str(dist.get('bajo', 0)), 'Riesgo Bajo', 'Normal', COLORS['success']),
+            ])
+            story.append(Spacer(1, 0.2 * inch))
+            
+            if total_cruces_calc == 0:
+                story.append(Paragraph("<b>Sin Hallazgos de Colusión:</b> No se detectaron entidades que actúen simultáneamente como clientes, proveedores y/o empleados. Esto sugiere una adecuada segregación de funciones.", styles['CustomBody']))
+                story.append(Spacer(1, 0.2 * inch))
+                return
+
+            # 2. Gráfico Principal (Side-by-Side: Pie Chart + Texto)
+            story.append(Paragraph("Distribución y Tipología de Riesgos", styles['CustomH1']))
+            
+            img_types = None
+            if isinstance(b64_types, str) and b64_types.startswith("data:image/png;base64,"):
+                img_bytes = base64.b64decode(b64_types.split(",", 1)[1])
+                bio = io.BytesIO(img_bytes)
+                img_types = Image(bio, width=3.4 * inch, height=2.4 * inch)
+            
+            if img_types:
+                img_types.hAlign = 'CENTER'
+                story.append(img_types)
+            else:
+                story.append(Paragraph("Sin datos de tipología.", styles['CompactBody']))
+            
+            story.append(Spacer(1, 0.1 * inch))
+            
+            # 3. Dashboard Moderno (Gauges + Progress Bars)
+            if isinstance(b64_heat, str) and b64_heat.startswith("data:image/png;base64,"):
+                story.append(Paragraph("Dashboard de Riesgos Detectados", styles['CustomH1']))
+                
+                story.append(Paragraph(
+                    "<b>Guía de Visualización:</b> El gráfico de la izquierda (<i>Gauges</i>) muestra el porcentaje de entidades clasificadas en cada nivel de riesgo (Bajo, Medio, Alto). "
+                    "El gráfico de la derecha detalla la <i>Tipología del Cruce</i>, indicando qué roles simultáneos están desempeñando las entidades detectadas (ej. Cliente que también es Proveedor).",
+                    styles['CompactBody']
+                ))
+                story.append(Spacer(1, 0.05 * inch))
+
+                img_bytes = base64.b64decode(b64_heat.split(",", 1)[1])
+                bio = io.BytesIO(img_bytes)
+                img_heat = Image(bio, width=7.5 * inch, height=2.6 * inch)
+                img_heat.hAlign = 'CENTER'
+                story.append(img_heat)
+
+            story.append(Spacer(1, 0.2 * inch))
+
+        except Exception as e:
+            story.append(Paragraph(f"Error generando sección de cruces: {str(e)}", styles['CompactBody']))
+
+
+    # --------------------
+    # Secciones
+    # --------------------
+    def _cover_compact(self, story, styles, empresa_id):
+        # Header en Tabla: Logo | Título + Meta
+        logo_img = None
+        try:
+            logo_path = os.path.join(os.getcwd(), "Logo.png")
+            if os.path.exists(logo_path):
+                logo_img = Image(logo_path, width=2.0 * inch, height=0.75 * inch)
+                logo_img.hAlign = 'LEFT'
+        except Exception:
+            pass
+            
+        title_text = [
+            Paragraph("REPORTE EJECUTIVO DE RIESGO", styles['CustomTitleCompact']),
+            Paragraph(f"Empresa ID: {empresa_id} · Generado: {datetime.now():%d/%m/%Y %H:%M}", styles['CustomMeta']),
+            Paragraph("Detección de relaciones ocultas entre Clientes, Proveedores y Empleados.", styles['CustomMeta'])
+        ]
+        
+        if logo_img:
+            data = [[logo_img, title_text]]
+            col_widths = [2.2 * inch, 5.0 * inch]
         else:
-            data_rows = [["ID Transacción", "Empresa", "Departamento", "Monto", "Acción"]]
-            limit = min(high_risk_count, 6)
-            idx = 0
-            for _, row in df_alto.iterrows():
-                if idx >= limit:
-                    break
-                idx += 1
-                tx_id = row.get('id_transaccion') or row.get('id_tx') or row.get('tx_id') or f"TX-{empresa_id}-{idx}"
-                raw_date = row.get('fecha_transaccion', row.get('fecha', row.get('fecha_tx', row.get('transaction_date', ''))))
-                try:
-                    fecha = pd.to_datetime(raw_date).strftime("%Y-%m-%d") if pd.notna(raw_date) else ""
-                except Exception:
-                    fecha = str(raw_date) if pd.notna(raw_date) else ""
-                monto_val = row.get('valor_transaccion', row.get('monto', 0))
-                try:
-                    monto_num = float(monto_val)
-                except Exception:
-                    monto_num = 0.0
-                monto = f"${monto_num:,.2f}"
-                empresa_txt = str(row.get('empresa', row.get('id_empresa', '')))
-                dep_txt = str(row.get('departamento', ''))
-                data_rows.append([str(tx_id), empresa_txt, dep_txt, monto, "Ver detalles"])
+            data = [[title_text]]
+            col_widths = [7.2 * inch]
+            
+        t = Table(data, colWidths=col_widths)
+        t.setStyle(TableStyle([
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('LEFTPADDING', (0,0), (-1,-1), 0),
+            ('RIGHTPADDING', (0,0), (-1,-1), 0),
+            ('TOPPADDING', (0,0), (-1,-1), 0),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+        ]))
+        story.append(t)
+        story.append(Spacer(1, 0.2 * inch))
+
+    def _cover(self, story, styles, empresa_id):
+        # Deprecated for single page, kept for reference if needed
+        self._cover_compact(story, styles, empresa_id)
+
+    def _metric_row(self, story, styles, metrics):
+        # Create a single table row with multiple columns (one per metric)
+        cells = []
+        for val, label, sublabel, color in metrics:
+            # Inner table for the cell content: Circle | Text Stack
+            d = Drawing(40, 40)
+            d.add(Circle(20, 20, 18, fillColor=color, strokeColor=color))
+            # Center the value inside the circle
+            # Adjust font size based on value length to fit in circle
+            fsize = 11 if len(str(val)) <= 3 else 9
+            d.add(String(20, 20 - (fsize/3), str(val), fillColor=colors.white, textAnchor='middle', fontSize=fsize, fontName='Helvetica-Bold'))
+            
+            # Text stack: Label \n Sublabel
+            # Use smaller font for sublabel
+            text_col = []
+            text_col.append(Paragraph(f"<b>{label}</b>", styles['CompactBody']))
+            if sublabel:
+                text_col.append(Paragraph(f"<font color='#666666' size=7>{sublabel}</font>", styles['CompactBody']))
+            
+            # Combine Drawing and Text in a nested table
+            # Column widths: Drawing (fixed), Text (flexible)
+            cell_content = Table([[d, text_col]], colWidths=[0.6*inch, 1.2*inch])
+            cell_content.setStyle(TableStyle([
+                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                ('LEFTPADDING', (0,0), (-1,-1), 0),
+                ('RIGHTPADDING', (0,0), (-1,-1), 0),
+                ('TOPPADDING', (0,0), (-1,-1), 0),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+            ]))
+            cells.append(cell_content)
+
+        # Main wrapper table
+        # Calculate width per cell based on page width
+        # Letter width = 8.5 inch. Margins = 0.5 left + 0.5 right = 1.0. Content = 7.5 inch.
+        # 4 metrics -> 1.8 inch per cell approx
+        col_w = 1.8 * inch
+        t = Table([cells], colWidths=[col_w] * len(cells))
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,-1), colors.white),
+            ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#e5e7eb')), # Outer border
+            ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor('#e5e7eb')), # Vertical separators
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('LEFTPADDING', (0,0), (-1,-1), 5),
+            ('RIGHTPADDING', (0,0), (-1,-1), 5),
+            ('TOPPADDING', (0,0), (-1,-1), 8),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+        ]))
+        story.append(t)
+
+    def _kpi_panel(self, story, styles, df_all, empresa_id, df_clientes, df_proveedores, df_empleados, entidades_cruces=None):
+        df = df_all[df_all.get('id_empresa', pd.Series()).astype(str) == str(empresa_id)]
+        total = len(df)
+        s = df.get('riesgo', pd.Series()).astype(str).str.upper()
+        bajo, medio, alto = [(s == x).sum() for x in ['BAJO', 'MEDIO', 'ALTO']]
+        
+        cruces_count = 0
+        try:
+            if entidades_cruces:
+                 # Use precomputed data
+                 dist = entidades_cruces.get('distribucion', {})
+                 # Sum values to get total count
+                 cruces_count = sum(int(v) for v in dist.values())
+            else:
+                analytics = CrucesAnalytics(df_clientes, df_proveedores, df_empleados)
+                df_cruces = analytics.procesar_datos()
+                cruces_count = len(df_cruces)
+        except Exception:
+            cruces_count = 0
+        
+        score5 = 0.0
+        if total > 0:
+            score_map = {'BAJO': 2.0, 'MEDIO': 3.0, 'ALTO': 4.5}
+            score5 = round(((bajo*score_map['BAJO'] + medio*score_map['MEDIO'] + alto*score_map['ALTO'])/total), 1)
+        
+        pct_alto = round((alto / max(total, 1)) * 100, 1)
+        
+        story.append(Paragraph("Panel Ejecutivo de Distribución de Riesgo", styles['CustomH1Compact']))
+        
+        # Metrics format: (Value, Main Label, Sub Label, Color)
+        self._metric_row(story, styles, [
+            (str(total), 'Total Registros', 'Analizados', COLORS['secondary']), # Blue
+            (str(cruces_count), 'Contrapartes', 'con Cruces', COLORS['warning']), # Yellow
+            (f"{score5}", 'Riesgo Promedio', 'Escala 1-5', COLORS['purple']), # Purple
+            (f"{alto}", 'Alto riesgo', f"{pct_alto}% del total", COLORS['danger']), # Red
+        ])
+        story.append(Spacer(1, 0.15 * inch))
+
+    def _risk_region_country(self, story, styles, df_all, empresa_id):
+        # Contenedor para KeepInFrame
+        frame_content = []
+        
+        # Título
+        frame_content.append(Paragraph("Geografía del Riesgo (Jurisdicciones)", styles['CustomH1Compact']))
+        
+        df = df_all[df_all.get('id_empresa', pd.Series()).astype(str) == str(empresa_id)]
+        
+        # Filtrar Alto Riesgo
+        s = df.get('riesgo', pd.Series()).astype(str).str.upper()
+        df = df.assign(_riesgo=s)
+        altos = df[df['_riesgo'] == 'ALTO']
+        
+        # --- Mapa Colombia ---
+        dept_counts = {}
+        if not altos.empty and 'departamento' in altos.columns:
+            counts = altos['departamento'].fillna('SIN INFORMACION').value_counts()
+            dept_counts = {str(k): int(v) for k, v in counts.items() if k != 'SIN INFORMACION'}
+        
+        img_colombia = None
+        try:
+            res = map_image_service.colombia_risk_map(dept_counts, empresa_id)
+            if res and res.get('base64'):
+                img_bytes = base64.b64decode(res['base64'].split(",", 1)[1])
+                bio = io.BytesIO(img_bytes)
+                # Tamaño ajustado para encajar y ser igual al mapa mundial
+                img_colombia = Image(bio, width=3.4 * inch, height=3.4 * inch)
+        except Exception:
+            pass
+            
+        # --- Mapa Mundial ---
+        fatf_status = {}
+        clas_col = 'pais_clasificacion' if 'pais_clasificacion' in df.columns else None
+        for _, r in df.iterrows():
+            p = r.get('pais')
+            if pd.notna(p):
+                 status = str(r.get(clas_col, 'COOPERANTE')).upper() if clas_col else 'COOPERANTE'
+                 fatf_status[str(p)] = status
+        
+        img_world = None
+        if fatf_status:
             try:
-                from collections import Counter
-                def most_dep_for_id(idc: str) -> str:
-                    dep_col = 'departamento'
-                    deps = []
-                    if isinstance(df_cli_emp, pd.DataFrame) and not df_cli_emp.empty and 'num_id' in df_cli_emp.columns:
-                        deps += list(df_cli_emp[df_cli_emp['num_id'].astype(str) == str(idc)][dep_col].dropna().astype(str).values)
-                    if isinstance(df_pro_emp, pd.DataFrame) and not df_pro_emp.empty and 'no_documento_de_identidad' in df_pro_emp.columns:
-                        deps += list(df_pro_emp[df_pro_emp['no_documento_de_identidad'].astype(str) == str(idc)][dep_col].dropna().astype(str).values)
-                    if isinstance(df_emp_emp, pd.DataFrame) and not df_emp_emp.empty and 'id_empleado' in df_emp_emp.columns:
-                        deps += list(df_emp_emp[df_emp_emp['id_empleado'].astype(str) == str(idc)][dep_col].dropna().astype(str).values)
-                    return Counter(deps).most_common(1)[0][0] if deps else ""
-                cruces = CrucesAnalytics(df_cli_emp, df_pro_emp, df_emp_emp)
-                df_cruces = cruces.procesar_datos()
-                c_idx = 0
-                for _, r in df_cruces.iterrows():
-                    if c_idx >= 4:
-                        break
-                    c_idx += 1
-                    tx_id = f"TX-{empresa_id}-C{c_idx}"
-                    empresa_txt = str(r.get('id_empresa', empresa_id))
-                    dep_txt = most_dep_for_id(str(r.get('id_contraparte', '')))
-                    monto_num = float(r.get('suma_clientes', 0) or 0) + float(r.get('suma_proveedores', 0) or 0) + float(r.get('suma_empleados', 0) or 0)
-                    monto = f"${monto_num:,.2f}"
-                    data_rows.append([tx_id, empresa_txt, dep_txt, monto, "Ver detalles"])
+                res = map_image_service.world_fatf_map(fatf_status)
+                if res and res.get('base64'):
+                    img_bytes = base64.b64decode(res['base64'].split(",", 1)[1])
+                    bio = io.BytesIO(img_bytes)
+                    # Tamaño ajustado igual al de Colombia
+                    img_world = Image(bio, width=3.4 * inch, height=3.4 * inch)
             except Exception:
                 pass
-            t_alerts = Table(data_rows, colWidths=[1.8*inch, 1.6*inch, 1.4*inch, 1.5*inch, 1.2*inch])
-            t_alerts.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#00b4d8')),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 10),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.lightgrey),
-                ('GRID', (0, 0), (-1, -1), 1, colors.black)
-            ]))
-            story.append(t_alerts)
-            if high_risk_count > limit:
-                story.append(Spacer(1, 0.1*inch))
-                story.append(Paragraph(f"Se muestran {limit} registros. Total alertas: {high_risk_count}.", normal_style))
 
-        story.append(Spacer(1, 0.2*inch))
-        story.append(Paragraph("Cuadro de Riesgos de Contraparte", heading_style))
+        # --- Tabla Layout ---
+        # Columna 1: Nacional
+        c1 = [Paragraph("<b>Nacional (Deptos)</b>", styles['CompactBody']), Spacer(1, 0.05 * inch)]
+        if img_colombia:
+            c1.append(img_colombia)
+        else:
+            c1.append(Paragraph("Sin datos.", styles['CompactBody']))
+            
+        # Columna 2: Internacional
+        c2 = [Paragraph("<b>Internacional</b>", styles['CompactBody']), Spacer(1, 0.05 * inch)]
+        if img_world:
+            c2.append(img_world)
+        else:
+            c2.append(Paragraph("Sin datos.", styles['CompactBody']))
+        
+        # Top texto
+        txt_dept = "Sin concentraciones."
+        if dept_counts:
+            sorted_depts = sorted(dept_counts.items(), key=lambda item: item[1], reverse=True)[:3]
+            txt_dept = ", ".join([f"{k} ({v})" for k, v in sorted_depts])
+            
+        txt_pais = "Sin concentraciones."
+        if not altos.empty and 'pais' in altos.columns:
+            grp_pais = altos['pais'].fillna('SIN INFORMACION').value_counts().head(3)
+            txt_pais = ", ".join([f"{k} ({v})" for k, v in grp_pais.items()])
+            
+        # Agregar resumen bajo mapa mundial
+        c2.append(Spacer(1, 0.1*inch))
+        c2.append(Paragraph(f"<b>Top Colombia:</b> {txt_dept}", styles['CompactBodySmall']))
+        c2.append(Paragraph(f"<b>Top Mundo:</b> {txt_pais}", styles['CompactBodySmall']))
+
+        tbl_data = [[c1, c2]]
+        t = Table(tbl_data, colWidths=[3.5*inch, 3.5*inch])
+        t.setStyle(TableStyle([
+            ('VALIGN', (0,0), (-1,-1), 'TOP'),
+            ('LEFTPADDING', (0,0), (-1,-1), 0),
+            ('RIGHTPADDING', (0,0), (-1,-1), 0),
+        ]))
+        frame_content.append(t)
+        
+        # Wrapper
+        protected = KeepInFrame(
+            maxWidth=7.5 * inch,
+            maxHeight=4.5 * inch,
+            content=frame_content,
+            mode="shrink"
+        )
+        story.append(protected)
+        story.append(Spacer(1, 0.1 * inch))
+
+    def _entity_crosses_section_compact(self, story, styles, empresa_id, df_clientes, df_proveedores, df_empleados):
+        story.append(Paragraph("Cruces de Entidades (Colusión)", styles['CustomH1Compact']))
         try:
-            df_emp_all = df_all[df_all['id_empresa'] == empresa_id].copy() if isinstance(df_all, pd.DataFrame) else pd.DataFrame()
-            def count_alto(col: str) -> int:
-                if df_emp_all.empty or col not in df_emp_all.columns:
-                    return 0
-                s = df_emp_all[col]
-                if isinstance(s, pd.DataFrame):
-                    s = s.iloc[:, 0]
-                s = s.astype(str).str.upper()
-                return int((s == 'ALTO').sum())
-            weights = self.CRITERIA_WEIGHTS
-            rows = [
-                ("País", "Exposición a países no cooperantes/paraisos fiscales", count_alto('categoria_riesgo_pais'), int(round(weights.get('pais', 0)*100))),
-                ("Jurisdicción", "Riesgo por jurisdicciones y cumplimiento FATF", count_alto('categoria_jurisdicciones'), int(round(weights.get('jurisdiccion', 0)*100))),
-                ("Actividad (CIIU)", "Riesgo por actividad económica de la contraparte", count_alto('categoria_riesgo_ciiu'), int(round(weights.get('ciiu', 0)*100))),
-                ("Tipo de Persona", "NATURAL/JURÍDICA/ESTATAL con mayor exposición", count_alto('categoria_riesgo_tipo_persona'), int(round(weights.get('tipo_persona', 0)*100))),
-                ("Medio de Pago", "Medios que incrementan riesgo operativo/LA/FT", count_alto('categoria_riesgo_medio_pago'), int(round(weights.get('medio_pago', 0)*100))),
-                ("Montos", "Operaciones con montos elevados/efectivo", count_alto('categoria_riesgo_montos'), int(round(weights.get('monto_efectivo', 0)*100))),
-                (">10% Histórico", "Picos de valor sobre el promedio histórico", count_alto('categoria_riesgo_valor_mas_10pct'), int(round(weights.get('valor_10pct', 0)*100))),
-                ("Relación", "Tipo de relación contractual con el proveedor", count_alto('categoria_riesgo_relacion'), int(round(weights.get('tipo_relacion', 0)*100))),
-                ("Localización", "Riesgo por ubicación geográfica", count_alto('categoria_riesgo_localizacion'), int(round(weights.get('localizacion', 0)*100))),
-            ]
-            t_riesgos = Table(
-                [["Factor", "Qué significa en este reporte", "Registros en alto", "Peso (%)"]] +
-                [[f, d, str(c), f"{w}"] for (f, d, c, w) in rows],
-                colWidths=[1.5*inch, 3.6*inch, 1.3*inch, 1.1*inch]
-            )
-            t_riesgos.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#00b4d8')),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 10),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f8fafc')),
-                ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                ('LEFTPADDING', (0, 0), (-1, -1), 8),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 8),
-                ('TOPPADDING', (0, 0), (-1, -1), 6),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-            ]))
-            story.append(t_riesgos)
+            analytics = CrucesAnalytics(df_clientes, df_proveedores, df_empleados)
+            df_cruces = analytics.procesar_datos()
+            dist = analytics.get_distribucion_riesgo()
+            total_cruces = len(df_cruces)
+            
+            # 1. Metricas en una fila
+            self._metric_row(story, styles, [
+                (str(total_cruces), 'Entidades', 'con Cruces', COLORS['info']),
+                (str(dist.get('alto', 0)), 'Riesgo Alto', 'Alerta', COLORS['danger']),
+                (str(dist.get('medio', 0)), 'Riesgo Medio', 'Seguimiento', COLORS['warning']),
+            ])
+            story.append(Spacer(1, 0.1 * inch))
+            
+            # 2. Gráfico (opcional, si cabe) o Tabla de Top Cruces
+            # Intentamos poner el gráfico pero muy bajito (wide)
+            gen = CrucesGraphGenerator(analytics)
+            b64 = gen.generate_composite_dashboard_chart()
+            if isinstance(b64, str) and b64.startswith("data:image/png;base64,"):
+                img_bytes = base64.b64decode(b64.split(",", 1)[1])
+                bio = io.BytesIO(img_bytes)
+                img = Image(bio, width=7.0 * inch, height=1.8 * inch) # Altura reducida
+                story.append(img)
+                
         except Exception:
-            story.append(Paragraph("No fue posible construir el cuadro de riesgos de contraparte.", normal_style))
-
-        # Build PDF
-        doc.build(story)
-    
-    def _get_avg_classification(self, df: pd.DataFrame, column: str) -> str:
-        """Get average classification for a criterion."""
-        if column not in df.columns:
-            return "N/A"
-        
-        values = df[column].value_counts()
-        if values.empty:
-            return "N/A"
-        
-        return values.index[0]  # Most common
-    
-    def _requires_due_diligence(self, df: pd.DataFrame, avg_score: float) -> bool:
-        """Determine if due diligence is required."""
-        # DDI required if:
-        # 1. Average score >= 2.0 (High or Extreme risk)
-        # 2. More than 5 high-risk transactions
-        # 3. Any transaction with score >= 3.0
-        
-        if avg_score >= 2.0:
-            return True
-        
-        if len(df) > 5:
-            return True
-        
-        return False
+            story.append(Paragraph("No hay información de cruces disponible.", styles['CompactBody']))
+        story.append(Spacer(1, 0.1 * inch))
 
 
-# Singleton instance
+
+    def _geographic_maps(self, story, styles, df_all, empresa_id):
+        # 1. Colombia Map
+        story.append(Paragraph("Mapa de Riesgo: Colombia", styles['CustomH1']))
+        df = df_all[df_all['id_empresa'] == empresa_id]
+        
+        # Prepare points for Colombia map
+        points = []
+        for _, row in df.iterrows():
+            # Check if lat/lon exists (or similar fields)
+            lat = row.get('lat') or row.get('latitud')
+            lon = row.get('lon') or row.get('longitud')
+            if pd.notna(lat) and pd.notna(lon):
+                 points.append({
+                    'lat': lat,
+                    'lon': lon,
+                    'monto': row.get('valor_transaccion', 0),
+                    'riesgo': row.get('riesgo', 'BAJO')
+                 })
+        
+        if points:
+            try:
+                res = map_image_service.colombia_empresa_map(points, empresa_id)
+                if res and res.get('base64'):
+                    img_bytes = base64.b64decode(res['base64'].split(",", 1)[1])
+                    bio = io.BytesIO(img_bytes)
+                    img = Image(bio, width=6.0 * inch, height=6.0 * inch)
+                    story.append(img)
+            except Exception as e:
+                story.append(Paragraph(f"No se pudo generar el mapa de Colombia: {str(e)}", styles['CompactBody']))
+        else:
+             story.append(Paragraph("No hay datos geográficos suficientes para el mapa de Colombia.", styles['CompactBody']))
+
+        story.append(Spacer(1, 0.2 * inch))
+
+        # 2. World Map
+        story.append(Paragraph("Mapa Mundial: Jurisdicciones y Cooperación", styles['CustomH1']))
+        fatf_status = {}
+        # Columns might be 'pais', 'pais_clasificacion'
+        clas_col = 'pais_clasificacion' if 'pais_clasificacion' in df.columns else None
+        
+        for _, r in df.iterrows():
+            p = r.get('pais')
+            if pd.notna(p):
+                 # Default to COOPERANTE if column missing
+                 status = str(r.get(clas_col, 'COOPERANTE')).upper() if clas_col else 'COOPERANTE'
+                 fatf_status[str(p)] = status
+        
+        if fatf_status:
+            try:
+                res = map_image_service.world_fatf_map(fatf_status)
+                if res and res.get('base64'):
+                    img_bytes = base64.b64decode(res['base64'].split(",", 1)[1])
+                    bio = io.BytesIO(img_bytes)
+                    # World map is wider
+                    img = Image(bio, width=7.0 * inch, height=3.5 * inch)
+                    story.append(img)
+            except Exception as e:
+                story.append(Paragraph(f"No se pudo generar el mapa mundial: {str(e)}", styles['CompactBody']))
+        else:
+             story.append(Paragraph("No hay información de países para el mapa mundial.", styles['CompactBody']))
+        
+        story.append(Spacer(1, 0.2 * inch))
+
+    def _ai_recommendations_compact(
+        self, story, styles, empresa_id, df_alto, df_clientes, df_proveedores, df_empleados
+    ):
+        story.append(Paragraph("Recomendaciones (IA)", styles['CompactH1']))
+        try:
+            cruces_total = 0
+            cruces_dist = {"alto": 0, "medio": 0, "bajo": 0}
+            try:
+                cruz_analytics = CrucesAnalytics(df_clientes, df_proveedores, df_empleados)
+                df_cruces = cruz_analytics.procesar_datos()
+                cruces_total = int(len(df_cruces))
+                cruces_dist = cruz_analytics.get_distribucion_riesgo()
+            except Exception:
+                cruces_total = 0
+                cruces_dist = {"alto": 0, "medio": 0, "bajo": 0}
+            kpis = {
+                "total_transacciones": int(len(df_alto)) if df_alto is not None else 0,
+                "monto_total": float(df_alto.get('valor_transaccion', pd.Series([0]*len(df_alto))).sum()) if df_alto is not None else 0.0,
+                "cruces_total": cruces_total,
+                "cruces_riesgo_alto": int(cruces_dist.get("alto", 0) or 0),
+                "cruces_riesgo_medio": int(cruces_dist.get("medio", 0) or 0),
+                "cruces_riesgo_bajo": int(cruces_dist.get("bajo", 0) or 0),
+            }
+            fatf_status = {}
+            if df_alto is not None and 'pais' in df_alto.columns:
+                clas_col = 'pais_clasificacion' if 'pais_clasificacion' in df_alto.columns else None
+                for _, r in df_alto.iterrows():
+                    p = r.get('pais')
+                    if pd.notna(p):
+                        fatf_status[str(p)] = str(r.get(clas_col, 'COOPERANTE')).upper() if clas_col else 'COOPERANTE'
+            ai_report = local_ai_report_service.generate_report({
+                "empresa_id": empresa_id,
+                "kpis": kpis,
+                "fatf_status": fatf_status,
+                "chart_data": {}
+            })
+            text = ai_report.get("report", {}).get("sections", {}).get("recommendations", "")
+            lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+            bullets = [ln for ln in lines if ln[:2].isdigit() or ln[:1].isdigit()]
+            if not bullets:
+                bullets = lines
+            truncated = bullets[:3]
+            story.append(Paragraph("• " + "<br/>• ".join(truncated), styles['CompactBody']))
+        except Exception:
+            story.append(Paragraph("No fue posible generar recomendaciones automáticas.", styles['CompactBody']))
+        story.append(Spacer(1, 0.15 * inch))
+
+    def _alerts_table_compact(self, story, styles, df_alto, empresa_id):
+        story.append(Paragraph("Alertas Detectadas", styles['CompactH1']))
+        try:
+            if df_alto is None or df_alto.empty:
+                story.append(Paragraph("<b>Excelente:</b> No se han detectado transacciones que superen los umbrales de riesgo configurados. Esto indica un comportamiento transaccional saludable según los criterios actuales.", styles['CompactBody']))
+                return
+            cols_map = {
+                'ID': ['id_transaccion', 'id_tx', 'tx_id'],
+                'Empresa': ['empresa', 'id_empresa'],
+                'NIT': ['nit', 'num_id', 'no_documento_de_identidad'],
+                'CIIU': ['ciiu'],
+                'Actividad': ['actividad', 'ciiu_descripcion'],
+                'Departamento': ['departamento'],
+                'Monto': ['valor_transaccion', 'monto'],
+                'Tipo': ['tipo_contraparte']
+            }
+            def pick(row, keys):
+                for k in keys:
+                    v = row.get(k)
+                    if pd.notna(v):
+                        return v
+                return ""
+            data = [["ID", "Empresa", "NIT", "CIIU", "Actividad", "Departamento", "Monto", "Tipo"]]
+            for _, r in df_alto.head(5).iterrows():
+                data.append([
+                    str(pick(r, cols_map['ID'])),
+                    str(pick(r, cols_map['Empresa'])),
+                    str(pick(r, cols_map['NIT'])),
+                    str(pick(r, cols_map['CIIU'])),
+                    str(pick(r, cols_map['Actividad'])),
+                    str(pick(r, cols_map['Departamento'])),
+                    f"${float(pick(r, cols_map['Monto']) or 0):,.2f}",
+                    str(pick(r, cols_map['Tipo']))
+                ])
+            t = Table(data, repeatRows=1)
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,0), COLORS['light']),
+                ('TEXTCOLOR', (0,0), (-1,0), COLORS['primary']),
+                ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0,0), (-1,0), 8),
+                ('FONTSIZE', (0,1), (-1,-1), 8),
+                ('GRID', (0,0), (-1,-1), 0.4, colors.HexColor('#dddddd')),
+                ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#fbfbfb')]),
+                ('TOPPADDING', (0,0), (-1,-1), 2),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 2),
+            ]))
+            story.append(t)
+        except Exception:
+            story.append(Paragraph("No fue posible construir la tabla de alertas.", styles['CompactBody']))
+        story.append(Spacer(1, 0.1 * inch))
+
+    def _dd_missing_table_compact(self, story, styles, df_all, empresa_id):
+        story.append(Paragraph("Transacciones sin Debida Diligencia", styles['CompactH1']))
+        try:
+            df = df_all[df_all.get('id_empresa', pd.Series()).astype(str) == str(empresa_id)].copy()
+            if df.empty:
+                story.append(Paragraph("No hay transacciones para la empresa.", styles['CompactBody']))
+                return
+            def motivos(row):
+                m = []
+                if str(row.get('tipo_de_relacion_contratista_proveedor', '')).upper() == 'SIN INFO':
+                    m.append('Relación proveedor SIN INFO')
+                if str(row.get('localizacion_nacional_internacional', '')).upper() == 'SIN INFO':
+                    m.append('Localización SIN INFO')
+                if pd.isna(row.get('pais_clasificacion')):
+                    m.append('País sin clasificación FATF')
+                if pd.isna(row.get('ciiu')):
+                    m.append('CIIU sin registro')
+                id_prov = row.get('no_documento_de_identidad')
+                id_cli = row.get('num_id')
+                if pd.isna(id_prov) and pd.isna(id_cli):
+                    m.append('Identificación faltante')
+                if pd.isna(row.get('medio_pago')):
+                    m.append('Medio de pago faltante')
+                tipo_pers = row.get('tipo_persona')
+                tipo_pers_alt = row.get('tipo_persona_natural_juridica_estatal_mixta')
+                if pd.isna(tipo_pers) and pd.isna(tipo_pers_alt):
+                    m.append('Tipo de persona faltante')
+                return m
+            records = []
+            for _, r in df.iterrows():
+                ms = motivos(r)
+                if ms:
+                    records.append((r, ms))
+            if not records:
+                story.append(Paragraph("No se detectaron transacciones con debida diligencia incompleta.", styles['CompactBody']))
+                return
+            records = sorted(records, key=lambda x: float(x[0].get('valor_transaccion', x[0].get('monto', 0)) or 0), reverse=True)[:5]
+            def pick(row, keys):
+                for k in keys:
+                    v = row.get(k)
+                    if pd.notna(v):
+                        return v
+                return ""
+            cols_map = {
+                'ID': ['id_transaccion', 'id_tx', 'tx_id'],
+                'Empresa': ['empresa', 'id_empresa'],
+                'NIT': ['nit', 'num_id', 'no_documento_de_identidad'],
+                'CIIU': ['ciiu'],
+                'Monto': ['valor_transaccion', 'monto'],
+                'Tipo': ['tipo_contraparte']
+            }
+            data = [["ID", "Empresa", "NIT", "CIIU", "Monto", "Tipo", "Motivo"]]
+            for row, ms in records:
+                data.append([
+                    str(pick(row, cols_map['ID'])),
+                    str(pick(row, cols_map['Empresa'])),
+                    str(pick(row, cols_map['NIT'])),
+                    str(pick(row, cols_map['CIIU'])),
+                    f"${float(pick(row, cols_map['Monto']) or 0):,.2f}",
+                    str(pick(row, cols_map['Tipo'])),
+                    "; ".join(ms)
+                ])
+            t = Table(data, repeatRows=1)
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,0), COLORS['light']),
+                ('TEXTCOLOR', (0,0), (-1,0), COLORS['primary']),
+                ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0,0), (-1,0), 8),
+                ('FONTSIZE', (0,1), (-1,-1), 8),
+                ('GRID', (0,0), (-1,-1), 0.4, colors.HexColor('#dddddd')),
+                ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#fbfbfb')]),
+                ('TOPPADDING', (0,0), (-1,-1), 2),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 2),
+            ]))
+            story.append(t)
+        except Exception:
+            story.append(Paragraph("No fue posible construir la sección de debida diligencia.", styles['CompactBody']))
+        story.append(Spacer(1, 0.1 * inch))
+
+    def _entity_crosses_table(self, story, styles, detalles, empresa_id):
+        story.append(Paragraph("Detalle de Cruces Detectados (Top 20)", styles['CompactH1']))
+        
+        if not detalles:
+            story.append(Paragraph("No hay detalles disponibles.", styles['CompactBody']))
+            return
+
+        # Headers
+        headers = ["ID Entidad", "Roles", "Trans. Cliente", "Trans. Proveedor", "Pagos Empleado"]
+        data = [headers]
+        
+        # Ordenar por riesgo y luego por monto total
+        detalles.sort(key=lambda x: (x.get('riesgo_maximo', 0), 
+                                     (x.get('cliente', {}) or {}).get('suma', 0) + 
+                                     (x.get('proveedor', {}) or {}).get('suma', 0) + 
+                                     (x.get('empleado', {}) or {}).get('suma', 0)), 
+                      reverse=True)
+
+        for d in detalles[:20]: # Limitar a 20 para que quepa
+            id_entidad = d['id_contraparte']
+            cats = d['conteo_categorias']
+            
+            # Helper para formatear montos y manejar NaN
+            def fmt_monto(val_dict):
+                if not val_dict:
+                    return "—"
+                m = val_dict.get('suma', 0)
+                if pd.isna(m):
+                    m = 0
+                return f"${m:,.0f}"
+
+            cli_str = fmt_monto(d.get('cliente'))
+            prov_str = fmt_monto(d.get('proveedor'))
+            emp_str = fmt_monto(d.get('empleado'))
+            
+            # Estilo para ID (Negrita si es riesgo alto)
+            id_style = styles['CompactBodySmall']
+            
+            data.append([
+                Paragraph(str(id_entidad), id_style),
+                str(cats),
+                cli_str,
+                prov_str,
+                emp_str
+            ])
+
+        # Estilo de tabla
+        # Ancho total disponible aprox 7.5 inch
+        t = Table(data, colWidths=[2.0*inch, 0.8*inch, 1.5*inch, 1.5*inch, 1.5*inch])
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), COLORS['primary']),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('ALIGN', (0,0), (1,0), 'LEFT'), # Headers left (except ID/Roles maybe?)
+            ('ALIGN', (2,1), (-1,-1), 'RIGHT'), # Montos a la derecha
+            ('ALIGN', (0,1), (1,-1), 'LEFT'), # ID y Roles a la izquierda
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0,0), (-1,0), 9),
+            ('BOTTOMPADDING', (0,0), (-1,0), 6),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#e0e0e0')),
+            ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f9f9f9')]),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ]))
+        story.append(t)
+        story.append(Spacer(1, 0.2 * inch))
+
+    def _styles(self):
+        s = getSampleStyleSheet()
+        # Ensure Helvetica (Standard Sans-Serif) is used to match the clean look
+        s.add(ParagraphStyle('CustomTitle', fontName='Helvetica-Bold', fontSize=18, alignment=TA_CENTER, textColor=COLORS['primary'], spaceAfter=20, leading=22))
+        s.add(ParagraphStyle('CustomTitleCompact', fontName='Helvetica-Bold', fontSize=16, alignment=TA_LEFT, textColor=COLORS['primary'], leading=20))
+        s.add(ParagraphStyle('CustomH1', fontName='Helvetica-Bold', fontSize=14, textColor=COLORS['primary'], spaceBefore=20, spaceAfter=10))
+        s.add(ParagraphStyle('CustomH1Compact', fontName='Helvetica-Bold', fontSize=12, textColor=COLORS['primary'], spaceBefore=5, spaceAfter=5))
+        s.add(ParagraphStyle('CustomBody', fontName='Helvetica', fontSize=10, alignment=TA_JUSTIFY, leading=14))
+        s.add(ParagraphStyle('CustomMeta', fontName='Helvetica', fontSize=9, alignment=TA_LEFT, textColor=COLORS['gray']))
+        s.add(ParagraphStyle('CompactH1', fontName='Helvetica-Bold', fontSize=12, textColor=COLORS['primary'], spaceBefore=10, spaceAfter=6))
+        s.add(ParagraphStyle('CompactBody', fontName='Helvetica', fontSize=9, alignment=TA_JUSTIFY, leading=12))
+        s.add(ParagraphStyle('CompactBodySmall', fontName='Helvetica', fontSize=8, alignment=TA_LEFT, leading=10, textColor=COLORS['dark']))
+        s.add(ParagraphStyle('FooterText', fontName='Helvetica', fontSize=8, alignment=TA_CENTER, textColor=COLORS['gray'], leading=10))
+        return s
+
+    # --------------------
+    # Stubs (mantén tus implementaciones reales)
+    # --------------------
+    def _load_dataframes(self):
+        try:
+            base = "data_provisional"
+            cli_path = os.path.join(base, "datos prueba clientes.csv")
+            pro_path = os.path.join(base, "datos prueba proveedores.csv")
+            emp_path = os.path.join(base, "datos prueba.csv")
+            df_cli = pd.read_csv(cli_path) if os.path.exists(cli_path) else pd.DataFrame()
+            df_pro = pd.read_csv(pro_path) if os.path.exists(pro_path) else pd.DataFrame()
+            df_emp = pd.read_csv(emp_path) if os.path.exists(emp_path) else pd.DataFrame()
+            if not df_cli.empty and 'tipo_contraparte' not in df_cli.columns:
+                df_cli['tipo_contraparte'] = 'cliente'
+            if not df_pro.empty and 'tipo_contraparte' not in df_pro.columns:
+                df_pro['tipo_contraparte'] = 'proveedor'
+            if not df_emp.empty and 'tipo_contraparte' not in df_emp.columns:
+                df_emp['tipo_contraparte'] = 'empleado'
+            if not df_emp.empty:
+                if 'valor' in df_emp.columns and 'valor_transaccion' not in df_emp.columns:
+                    df_emp = df_emp.rename(columns={'valor': 'valor_transaccion'})
+                # Riesgo desde conteo_alto si existe
+                if 'conteo_alto' in df_emp.columns and 'riesgo' not in df_emp.columns:
+                    df_emp['riesgo'] = df_emp['conteo_alto'].astype(str).str.upper().map({
+                        'ALTO': 'ALTO',
+                        'MEDIO': 'MEDIO',
+                        'BAJO': 'BAJO'
+                    }).fillna('BAJO')
+            # Unificar clientes y proveedores
+            df_all = pd.concat([df_cli, df_pro], ignore_index=True, sort=False)
+            # Asegurar columna riesgo
+            if not df_all.empty and 'riesgo' not in df_all.columns:
+                if 'nivel_riesgo' in df_all.columns:
+                    df_all['riesgo'] = df_all['nivel_riesgo'].astype(str).str.upper()
+                elif 'orden_clasificacion_del_riesgo' in df_all.columns:
+                    def map_ord(x):
+                        try:
+                            v = int(x)
+                        except Exception:
+                            return 'BAJO'
+                        if v >= 3:
+                            return 'ALTO'
+                        elif v == 2:
+                            return 'MEDIO'
+                        else:
+                            return 'BAJO'
+                    df_all['riesgo'] = df_all['orden_clasificacion_del_riesgo'].apply(map_ord)
+                else:
+                    df_all['riesgo'] = 'BAJO'
+            # Asegurar columnas clave
+            for d in (df_all, df_cli, df_pro, df_emp):
+                if 'id_empresa' not in d.columns:
+                    d['id_empresa'] = ''
+            return df_all, df_cli, df_pro, df_emp
+        except Exception:
+            # Fallback seguro
+            cols = ['id_empresa', 'riesgo', 'valor_transaccion', 'tipo_contraparte']
+            return pd.DataFrame(columns=cols), pd.DataFrame(columns=cols), pd.DataFrame(columns=cols), pd.DataFrame(columns=cols)
+
+    def _filter_high_risk(self, df):
+        return df[df.get('riesgo', '').astype(str).str.upper() == 'ALTO']
+
+    def _avg_score(self, df):
+        return float(df.get('score', pd.Series()).mean() or 0)
+
+    def _get_risk_level(self, score):
+        return 'RIESGO ALTO' if score >= 2 else 'RIESGO BAJO'
+
+    def _top_risk_causes(self, story, styles, df_all, empresa_id):
+        story.append(Paragraph("Causas Principales de Riesgo", styles['CustomH1']))
+
+    def _entity_crosses(self, story, styles, empresa_id, df_clientes, df_proveedores, df_empleados):
+        story.append(Paragraph("Cruces de Entidades", styles['CustomH1']))
+        try:
+            analytics = CrucesAnalytics(df_clientes, df_proveedores, df_empleados)
+            analytics.procesar_datos()
+            gen = CrucesGraphGenerator(analytics)
+            b64 = gen.generate_composite_dashboard_chart()
+            if isinstance(b64, str) and b64.startswith("data:image/png;base64,"):
+                img_bytes = base64.b64decode(b64.split(",", 1)[1])
+                bio = io.BytesIO(img_bytes)
+                img = Image(bio, width=6.5 * inch, height=2.0 * inch)
+                story.append(img)
+        except Exception:
+            pass
+        story.append(Spacer(1, 0.25 * inch))
+
+    def _ai_recommendations(self, story, styles, empresa_id, df_alto):
+        story.append(Paragraph("Recomendaciones (IA)", styles['CustomH1']))
+        try:
+            kpis = {
+                "total_transacciones": int(len(df_alto)) if df_alto is not None else 0,
+                "monto_total": float(df_alto.get('valor_transaccion', pd.Series([0]*len(df_alto))).sum()) if df_alto is not None else 0.0,
+            }
+            fatf_status = {}
+            if df_alto is not None and 'pais' in df_alto.columns:
+                clas_col = 'pais_clasificacion' if 'pais_clasificacion' in df_alto.columns else None
+                for _, r in df_alto.iterrows():
+                    p = r.get('pais')
+                    if pd.notna(p):
+                        fatf_status[str(p)] = str(r.get(clas_col, 'COOPERANTE')).upper() if clas_col else 'COOPERANTE'
+            ai_report = local_ai_report_service.generate_report({
+                "empresa_id": empresa_id,
+                "kpis": kpis,
+                "fatf_status": fatf_status,
+                "chart_data": {}
+            })
+            text = ai_report.get("report", {}).get("sections", {}).get("recommendations", "")
+            lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+            bullets = [ln for ln in lines if ln[:2].isdigit() or ln[:1].isdigit()]
+            if not bullets:
+                bullets = lines
+            truncated = bullets[:3]
+            story.append(Paragraph("• " + "<br/>• ".join(truncated), styles['CustomBody']))
+        except Exception:
+            story.append(Paragraph("No fue posible generar recomendaciones automáticas.", styles['CustomBody']))
+        story.append(Spacer(1, 0.25 * inch))
+
+    def _alerts_table(self, story, styles, df_alto, empresa_id):
+        story.append(Paragraph("Alertas Detectadas", styles['CustomH1']))
+        try:
+            if df_alto is None or df_alto.empty:
+                story.append(Paragraph("<b>Excelente:</b> No se han detectado transacciones que superen los umbrales de riesgo configurados. Esto indica un comportamiento transaccional saludable según los criterios actuales.", styles['CustomBody']))
+                return
+            cols_map = {
+                'ID': ['id_transaccion', 'id_tx', 'tx_id'],
+                'Empresa': ['empresa', 'id_empresa'],
+                'NIT': ['nit', 'num_id', 'no_documento_de_identidad'],
+                'CIIU': ['ciiu'],
+                'Actividad': ['actividad', 'ciiu_descripcion'],
+                'Departamento': ['departamento'],
+                'Monto': ['valor_transaccion', 'monto'],
+                'Tipo': ['tipo_contraparte']
+            }
+            def pick(row, keys):
+                for k in keys:
+                    v = row.get(k)
+                    if pd.notna(v):
+                        return v
+                return ""
+            data = [["ID", "Empresa", "NIT", "CIIU", "Actividad", "Departamento", "Monto", "Tipo"]]
+            for _, r in df_alto.head(5).iterrows():
+                data.append([
+                    str(pick(r, cols_map['ID'])),
+                    str(pick(r, cols_map['Empresa'])),
+                    str(pick(r, cols_map['NIT'])),
+                    str(pick(r, cols_map['CIIU'])),
+                    str(pick(r, cols_map['Actividad'])),
+                    str(pick(r, cols_map['Departamento'])),
+                    f"${float(pick(r, cols_map['Monto']) or 0):,.2f}",
+                    str(pick(r, cols_map['Tipo']))
+                ])
+            t = Table(data, repeatRows=1)
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,0), COLORS['light']),
+                ('TEXTCOLOR', (0,0), (-1,0), COLORS['primary']),
+                ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0,0), (-1,0), 10),
+                ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#dddddd')),
+                ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#fafafa')]),
+            ]))
+            story.append(t)
+        except Exception:
+            story.append(Paragraph("No fue posible construir la tabla de alertas.", styles['CustomBody']))
+
+    def _dd_missing_table(self, story, styles, df_all, empresa_id):
+        story.append(Paragraph("Transacciones sin Debida Diligencia", styles['CustomH1']))
+        try:
+            if df_all is None or df_all.empty:
+                story.append(Paragraph("No hay transacciones disponibles.", styles['CustomBody']))
+                return
+            df = df_all[df_all.get('id_empresa', pd.Series()).astype(str) == str(empresa_id)].copy()
+            if df.empty:
+                story.append(Paragraph("No hay transacciones para la empresa.", styles['CustomBody']))
+                return
+            def motivos(row):
+                m = []
+                if str(row.get('tipo_de_relacion_contratista_proveedor', '')).upper() == 'SIN INFO':
+                    m.append('Relación proveedor SIN INFO')
+                if str(row.get('localizacion_nacional_internacional', '')).upper() == 'SIN INFO':
+                    m.append('Localización SIN INFO')
+                if pd.isna(row.get('pais_clasificacion')):
+                    m.append('País sin clasificación FATF')
+                if pd.isna(row.get('ciiu')):
+                    m.append('CIIU sin registro')
+                id_prov = row.get('no_documento_de_identidad')
+                id_cli = row.get('num_id')
+                if pd.isna(id_prov) and pd.isna(id_cli):
+                    m.append('Identificación faltante')
+                if pd.isna(row.get('medio_pago')):
+                    m.append('Medio de pago faltante')
+                tipo_pers = row.get('tipo_persona')
+                tipo_pers_alt = row.get('tipo_persona_natural_juridica_estatal_mixta')
+                if pd.isna(tipo_pers) and pd.isna(tipo_pers_alt):
+                    m.append('Tipo de persona faltante')
+                return m
+            records = []
+            for _, r in df.iterrows():
+                ms = motivos(r)
+                if ms:
+                    records.append((r, ms))
+            if not records:
+                story.append(Paragraph("No se detectaron transacciones con debida diligencia incompleta.", styles['CustomBody']))
+                return
+            records = sorted(records, key=lambda x: float(x[0].get('valor_transaccion', x[0].get('monto', 0)) or 0), reverse=True)[:5]
+            def pick(row, keys):
+                for k in keys:
+                    v = row.get(k)
+                    if pd.notna(v):
+                        return v
+                return ""
+            cols_map = {
+                'ID': ['id_transaccion', 'id_tx', 'tx_id'],
+                'Empresa': ['empresa', 'id_empresa'],
+                'NIT': ['nit', 'num_id', 'no_documento_de_identidad'],
+                'CIIU': ['ciiu'],
+                'Monto': ['valor_transaccion', 'monto'],
+                'Tipo': ['tipo_contraparte']
+            }
+            data = [["ID", "Empresa", "NIT", "CIIU", "Monto", "Tipo", "Motivo"]]
+            for row, ms in records:
+                data.append([
+                    str(pick(row, cols_map['ID'])),
+                    str(pick(row, cols_map['Empresa'])),
+                    str(pick(row, cols_map['NIT'])),
+                    str(pick(row, cols_map['CIIU'])),
+                    f"${float(pick(row, cols_map['Monto']) or 0):,.2f}",
+                    str(pick(row, cols_map['Tipo'])),
+                    "; ".join(ms)
+                ])
+            t = Table(data, repeatRows=1)
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,0), COLORS['light']),
+                ('TEXTCOLOR', (0,0), (-1,0), COLORS['primary']),
+                ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0,0), (-1,0), 10),
+                ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#dddddd')),
+                ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#fafafa')]),
+            ]))
+            story.append(t)
+        except Exception:
+            story.append(Paragraph("No fue posible construir la sección de debida diligencia.", styles['CustomBody']))
+        story.append(Spacer(1, 0.2 * inch))
+
 pdf_risk_report_service = PDFRiskReportService()

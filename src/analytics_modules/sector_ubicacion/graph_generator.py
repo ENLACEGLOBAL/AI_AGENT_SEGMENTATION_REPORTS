@@ -20,17 +20,40 @@ class GraphGenerator:
 
     def __init__(self, df_transacciones: pd.DataFrame):
         self.df = df_transacciones
-        self.alto = df_transacciones[df_transacciones.get("riesgo", pd.Series(["ALTO"] * len(df_transacciones))) == "ALTO"]
+        # self.alto no se usará exclusivamente para el gráfico general de CIIU
 
     # -----------------------------------------
     # 1. DATASET para el JSON
     # -----------------------------------------
     def get_donut_dataset(self) -> Dict[str, Any]:
-        group = self.alto.groupby(self.alto.get("actividad", pd.Series(["General"] * len(self.alto))))[
-            self.alto.get("monto", pd.Series([0] * len(self.alto)))
-        ].sum()
+        """
+        Genera distribución por CIIU/Actividad usando TODAS las transacciones
+        para dar contexto real de la operación de la empresa.
+        """
+        if self.df.empty:
+            return {"labels": [], "values": []}
+
+        # Intentar usar columna 'ciiu' o 'actividad'
+        col_group = 'ciiu' if 'ciiu' in self.df.columns else 'actividad'
+        if col_group not in self.df.columns:
+            # Fallback si no existe ninguna
+            return {"labels": ["Desconocido"], "values": [1]}
+
+        # Agrupar por la columna detectada y sumar montos (o contar si no hay montos)
+        col_monto = 'monto' if 'monto' in self.df.columns else 'valor_transaccion'
+        
+        if col_monto in self.df.columns:
+            # Asegurar numérico
+            self.df[col_monto] = pd.to_numeric(self.df[col_monto], errors='coerce').fillna(0)
+            group = self.df.groupby(col_group)[col_monto].sum()
+        else:
+            group = self.df[col_group].value_counts()
+
+        # Tomar top 10 para no saturar el gráfico
+        group = group.sort_values(ascending=False).head(10)
+        
         return {
-            "labels": list(group.index),
+            "labels": [str(x) for x in group.index],
             "values": [float(v) for v in group.values]
         }
 

@@ -26,15 +26,44 @@ class SectorGeoAnalytics:
     # 2. MAPA COLOMBIA
     # ---------------------------------------------------------
     def get_mapa_colombia(self) -> List[Dict[str, Any]]:
-        """Generate map data for Colombia (only ALTO risk)."""
+        """Generate map data for Colombia (Risk Only: ALTO/MEDIO)."""
         df_all_transactions = self.df
         if df_all_transactions.empty:
             return []
+            
         mapa_data = []
-        for _, row in df_all_transactions.iterrows():
+        
+        # Filter for risks only
+        # Normalizamos a mayúsculas para comparar
+        riesgos_permitidos = ['ALTO', 'MEDIO', 'HIGH', 'MEDIUM']
+        
+        # Iteramos pero limitamos para evitar colapsar el navegador con 500k puntos
+        count = 0
+        limit = 1000
+        
+        # Ordenamos por riesgo (prioridad a ALTO) si es posible, o por monto descendente
+        # Asumiendo que tenemos 'riesgo' y 'monto'
+        try:
+            # Crear copia para no afectar original
+            df_sorted = df_all_transactions.copy()
+            # Asegurar columna monto como float
+            col_monto = 'monto' if 'monto' in df_sorted.columns else 'valor_transaccion'
+            if col_monto in df_sorted.columns:
+                df_sorted[col_monto] = pd.to_numeric(df_sorted[col_monto], errors='coerce').fillna(0)
+                df_sorted = df_sorted.sort_values(by=col_monto, ascending=False)
+        except:
+            df_sorted = df_all_transactions
+
+        for _, row in df_sorted.iterrows():
+            if count >= limit:
+                break
+                
             riesgo = str(row.get('riesgo', '')).upper()
-            if riesgo != 'ALTO':
+            
+            # FILTRO: Solo agregar si es ALTO o MEDIO
+            if riesgo not in riesgos_permitidos:
                 continue
+
             mapa_data.append({
                 "lat": row.get('lat', 4.5709),
                 "lon": row.get('lon', -74.2973),
@@ -42,6 +71,8 @@ class SectorGeoAnalytics:
                 "contraparte": row.get('nombre', row.get('id_contraparte', 'Unknown')),
                 "riesgo": riesgo
             })
+            count += 1
+            
         return mapa_data
 
     # ---------------------------------------------------------
