@@ -26,26 +26,33 @@ from reportlab.platypus import (
 from reportlab.graphics.shapes import Drawing, Circle, String, Rect
 from src.analytics_modules.cruces_entidades.cruces_analytics import CrucesAnalytics
 from src.analytics_modules.cruces_entidades.cruces_graph_generator import CrucesGraphGenerator
+from src.analytics_modules.sector_ubicacion.graph_generator import GraphGenerator
+
 from src.services.local_ai_report_service import local_ai_report_service
 from src.services.map_image_service import map_image_service
 from src.db.base import TargetSessionLocal
 from src.db.repositories.generated_report_repo import GeneratedReportRepository
 from src.services.s3_service import s3_service
+from src.db.base import SourceSessionLocal
+from src.db.models.cliente import Cliente
+from src.db.models.proveedor import Proveedor
+from src.db.models.empleado import Empleado
+from src.db.models.reference_tables import AuxiliarCiiu
 
 # --------------------
-# Paleta corporativa (Basada en Logo)
+# Paleta corporativa (User Requested: Teal, Sand, Blue - No Red)
 # --------------------
 COLORS = {
-    'primary': colors.HexColor('#00a19c'),   # Turquesa Corporativo
-    'secondary': colors.HexColor('#005fa3'), # Azul complementario
-    'success': colors.HexColor('#2a9d8f'),
-    'warning': colors.HexColor('#f0b323'),   # Amarillo Corporativo
-    'danger': colors.HexColor('#e40046'),    # Magenta Corporativo
-    'info': colors.HexColor('#457b9d'),
+    'primary': colors.HexColor('#2a9d8f'),   # Green (Teal)
+    'secondary': colors.HexColor('#2AB4EB'), # Light Blue (User Request)
+    'success': colors.HexColor('#2a9d8f'),   # Green
+    'warning': colors.HexColor('#e9c46a'),   # Sand/Yellow
+    'danger': colors.HexColor('#264653'),    # Dark Blue/Cyan (Alternative to Red)
+    'info': colors.HexColor('#2AB4EB'),      # Light Blue
     'light': colors.HexColor('#f8f9fa'),
     'gray': colors.HexColor('#6c757d'),
-    'dark': colors.HexColor('#343a40'),
-    'purple': colors.HexColor('#7c3aed'),
+    'dark': colors.HexColor('#333333'),
+    'purple': colors.HexColor('#1a7bb9'),    # Darker Blue variation
 }
 
 
@@ -91,8 +98,8 @@ class PDFRiskReportService:
         if not empresa_id:
             raise ValueError("empresa_id no encontrado en JSON ni en nombre de archivo")
 
-        df_all, df_clientes, df_proveedores, df_empleados = self._load_dataframes()
-        df_empresa = df_all[df_all['id_empresa'] == empresa_id].copy()
+        df_all, df_clientes, df_proveedores, df_empleados = self._load_dataframes(empresa_id)
+        df_empresa = df_all[df_all['id_empresa'].astype(str) == str(empresa_id)].copy()
 
         df_alto = self._filter_high_risk(df_empresa)
         avg_score = self._avg_score(df_alto)
@@ -125,7 +132,9 @@ class PDFRiskReportService:
         local_file = None
         if output_path:
             try:
-                os.makedirs(os.path.dirname(output_path), exist_ok=True)
+                dirpath = os.path.dirname(output_path)
+                if dirpath:
+                    os.makedirs(dirpath, exist_ok=True)
                 with open(output_path, "wb") as f:
                     f.write(pdf_bytes)
                 local_file = output_path
@@ -135,11 +144,15 @@ class PDFRiskReportService:
 
         # Intentar subir a S3
         filename = f"Reporte_{empresa_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-        s3_url = s3_service.upload_file(pdf_bytes, filename)
+        s3_key = f"reports/{filename}" # Store in reports folder
+        s3_url = s3_service.upload_file(pdf_bytes, s3_key)
 
         pdf_content_to_store = pdf_bytes
         if s3_url:
-            virtual_path = s3_url
+            # GUARDAR SOLO EL NOMBRE DEL ARCHIVO (KEY)
+            # Esto permite que el controlador PHP genere URLs firmadas (temporaryUrl)
+            # y valide correctamente el acceso al bucket privado.
+            virtual_path = s3_key
             pdf_content_to_store = None # Optimization: Don't store BLOB if S3 worked
         else:
             # Fallback a almacenamiento solo en BD (BLOB)
@@ -197,57 +210,60 @@ class PDFRiskReportService:
     def _build_pdf(self, output, empresa_id, df_all, df_alto, avg_score, risk_level,
                    df_clientes, df_proveedores, df_empleados, entidades_cruces=None):
 
+        # User Request: 3020 pixels width (assuming points for PDF)
+        # Height: Increased to 4000 to accommodate 5x scaled content on a "single page"
+        PAGE_WIDTH = 3020
+        PAGE_HEIGHT = 3200
+        
         doc = SimpleDocTemplate(
             output,
-            pagesize=letter,
+            pagesize=(PAGE_WIDTH, PAGE_HEIGHT),
             leftMargin=0.5 * inch,
             rightMargin=0.5 * inch,
-            topMargin=0.4 * inch,
-            bottomMargin=0.4 * inch
+            topMargin=0.2 * inch,
+            bottomMargin=0.2 * inch
         )
 
         styles = self._styles()
         story = []
 
-        # ================= PAGE 1: EXECUTIVE SUMMARY & GEOGRAPHY =================
+        # ================= PAGE 1: EXECUTIVE SUMMARY & CRUCES =================
         # 1. Header Compacto (Logo + Título)
-        self._cover_compact(story, styles, empresa_id)
+        self._cover_compact(story, styles, empresa_id, page_width=PAGE_WIDTH)
+        story.append(Spacer(1, 1.0 * inch))
         
         # 2. KPIs Globales
-        self._kpi_panel(story, styles, df_all, empresa_id, df_clientes, df_proveedores, df_empleados)
-        
-        # 3. Mapas (Geografía) - Side by Side
-        self._risk_region_country(story, styles, df_all, empresa_id)
+        self._kpi_panel(story, styles, df_all, empresa_id, df_clientes, df_proveedores, df_empleados, entidades_cruces, page_width=PAGE_WIDTH)
+        story.append(Spacer(1, 1.0 * inch))
 
-        story.append(Spacer(1, 0.2 * inch))
-        story.append(Paragraph("<b>Interpretación de Gráficas:</b> El <b>Mapa de Colombia</b> destaca regiones con mayor concentración de operaciones riesgosas. El <b>Mapa Mundial</b> indica la clasificación FATF de las contrapartes internacionales (ej. países no cooperantes).", styles['FooterText']))
-        story.append(PageBreak())
+        # 3. Sector y Ubicación (Compacto) - MOVIDO ANTES DE CRUCES
+        self._sector_location_compact(story, styles, df_all, page_width=PAGE_WIDTH)
+        story.append(Spacer(1, 0.8 * inch))
         
-        # ================= PAGE 2: ENTITY CROSSES ANALYSIS =================
-        # 4. Cruces de Entidades (Full Page)
-        self._entity_crosses_page_full(story, styles, empresa_id, df_clientes, df_proveedores, df_empleados, entidades_cruces)
+        # 4. Cruces de Entidades (Full Dashboard)
+        self._entity_crosses_page_full(story, styles, empresa_id, df_clientes, df_proveedores, df_empleados, entidades_cruces, page_width=PAGE_WIDTH)
 
         # Footer Simple
-        story.append(Spacer(1, 0.2 * inch))
-        story.append(Paragraph("<b>Interpretación de Gráficas:</b> <b>Gráfica Circular:</b> Muestra la proporción de los diferentes tipos de conflictos (ej. Cliente-Proveedor). <b>Dashboard:</b> Panel detallado con indicadores de severidad (Gauges) y barras de progreso por tipología.", styles['FooterText']))
-        story.append(Paragraph("<b>Nota:</b> Reporte elaborado con <b>uso de analítica especializada</b>; consolida la exposición geográfica y el riesgo de colusión.",
-                               styles['FooterText']))
+        # Eliminado por solicitud del usuario
         
         doc.build(story)
 
-    def _entity_crosses_page_full(self, story, styles, empresa_id, df_clientes, df_proveedores, df_empleados, entidades_cruces=None):
+    def _entity_crosses_page_full(self, story, styles, empresa_id, df_clientes, df_proveedores, df_empleados, entidades_cruces=None, page_width=None):
         story.append(Paragraph("Análisis de Cruces de Entidades (Colusión)", styles['CustomTitle']))
-        story.append(Paragraph("Detección de cruces entre contrapartes (solo se detectan cruces).", styles['CustomMeta']))
-        story.append(Spacer(1, 0.2 * inch))
+        # Subtitle removed to reduce redundancy
+        story.append(Spacer(1, 0.5 * inch)) # SCALED Spacer
 
         try:
-            if entidades_cruces:
+            # Check if we have valid precomputed data (must have 'distribucion' and 'chart_heatmap_base64')
+            use_precomputed = False
+            if entidades_cruces and 'distribucion' in entidades_cruces and entidades_cruces.get('chart_heatmap_base64'):
+                 use_precomputed = True
+            
+            if use_precomputed:
                 # Use precomputed data
                 dist = entidades_cruces.get('distribucion', {})
                 tabla = entidades_cruces.get('tabla', [])
                 total_cruces_calc = sum(int(v) for v in dist.values())
-                
-                # Check if we have graphs
                 b64_types = entidades_cruces.get('chart_types_base64')
                 b64_heat = entidades_cruces.get('chart_heatmap_base64')
                 
@@ -264,128 +280,178 @@ class PDFRiskReportService:
                 b64_types = gen.generate_cross_types_chart()
                 b64_heat = gen.generate_cruces_heatmap_chart()
 
-            # 1. Metricas Principales (Row)
-            self._metric_row(story, styles, [
+            metrics = [
                 (str(total_cruces_calc), 'Entidades', 'con Cruces', COLORS['info']),
                 (str(dist.get('alto', 0)), 'Riesgo Alto', 'Alerta Extrema', COLORS['danger']),
                 (str(dist.get('medio', 0)), 'Riesgo Medio', 'Seguimiento', COLORS['warning']),
                 (str(dist.get('bajo', 0)), 'Riesgo Bajo', 'Normal', COLORS['success']),
-            ])
-            story.append(Spacer(1, 0.2 * inch))
+            ]
+
+            # Reverting to Circular Metric Row as requested by user
+            # This ensures the specific "Circle + Text" design is used
+            self._metric_row(story, styles, metrics, page_width=page_width)
+            story.append(Spacer(1, 0.3 * inch))
             
             if total_cruces_calc == 0:
                 story.append(Paragraph("<b>Sin Hallazgos de Colusión:</b> No se detectaron entidades que actúen simultáneamente como clientes, proveedores y/o empleados. Esto sugiere una adecuada segregación de funciones.", styles['CustomBody']))
-                story.append(Spacer(1, 0.2 * inch))
+                story.append(Spacer(1, 1.0 * inch)) # SCALED Spacer
                 return
 
             # 2. Gráfico Principal (Side-by-Side: Pie Chart + Texto)
-            story.append(Paragraph("Distribución y Tipología de Riesgos", styles['CustomH1']))
+            # story.append(Paragraph("Distribución y Tipología de Riesgos", styles['CustomH1']))
             
-            img_types = None
-            if isinstance(b64_types, str) and b64_types.startswith("data:image/png;base64,"):
-                img_bytes = base64.b64decode(b64_types.split(",", 1)[1])
-                bio = io.BytesIO(img_bytes)
-                img_types = Image(bio, width=3.4 * inch, height=2.4 * inch)
+            # ELIMINADO POR SOLICITUD DEL USUARIO
+            # img_types = None
+            # if isinstance(b64_types, str) and b64_types.startswith("data:image/png;base64,"):
+            #    img_bytes = base64.b64decode(b64_types.split(",", 1)[1])
+            #    bio = io.BytesIO(img_bytes)
+            #    img_types = Image(bio, width=3.4 * inch, height=2.4 * inch)
             
-            if img_types:
-                img_types.hAlign = 'CENTER'
-                story.append(img_types)
-            else:
-                story.append(Paragraph("Sin datos de tipología.", styles['CompactBody']))
+            # if img_types:
+            #    img_types.hAlign = 'CENTER'
+            #    story.append(img_types)
+            # else:
+            #    story.append(Paragraph("Sin datos de tipología.", styles['CompactBody']))
             
-            story.append(Spacer(1, 0.1 * inch))
+            # story.append(Spacer(1, 0.1 * inch))
             
             # 3. Dashboard Moderno (Gauges + Progress Bars)
             if isinstance(b64_heat, str) and b64_heat.startswith("data:image/png;base64,"):
-                story.append(Paragraph("Dashboard de Riesgos Detectados", styles['CustomH1']))
-                
+                # Removed redundant title to save space
                 story.append(Paragraph(
-                    "<b>Guía de Visualización:</b> El gráfico de la izquierda (<i>Gauges</i>) muestra el porcentaje de entidades clasificadas en cada nivel de riesgo (Bajo, Medio, Alto). "
-                    "El gráfico de la derecha detalla la <i>Tipología del Cruce</i>, indicando qué roles simultáneos están desempeñando las entidades detectadas (ej. Cliente que también es Proveedor).",
+                    "Guía de Visualización: El gráfico de la izquierda (Gauges) muestra el porcentaje de entidades clasificadas en cada nivel de riesgo (Bajo, Medio, Alto). "
+                    "El gráfico de la derecha detalla la Tipología del Cruce, indicando qué roles simultáneos están desempeñando las entidades detectadas (ej. Cliente que también es Proveedor).",
                     styles['CompactBody']
                 ))
-                story.append(Spacer(1, 0.05 * inch))
+                story.append(Spacer(1, 0.5 * inch)) # SCALED Spacer
 
                 img_bytes = base64.b64decode(b64_heat.split(",", 1)[1])
                 bio = io.BytesIO(img_bytes)
-                img_heat = Image(bio, width=7.5 * inch, height=2.6 * inch)
+                
+                available_width = (page_width - 1.0 * inch) if page_width else (7.5 * inch)
+                target_height = available_width * (1.4 / 7.5)
+                
+                img_heat = Image(bio, width=available_width, height=target_height)
                 img_heat.hAlign = 'CENTER'
                 story.append(img_heat)
 
-            story.append(Spacer(1, 0.2 * inch))
+            story.append(Spacer(1, 0.5 * inch)) # SCALED Spacer
 
         except Exception as e:
             story.append(Paragraph(f"Error generando sección de cruces: {str(e)}", styles['CompactBody']))
 
 
+    def _sector_location_compact(self, story, styles, df_all, page_width=None):
+        story.append(Paragraph("Transacciones por Sector Económico y Ubicación Geográfica", styles['CustomH1Compact']))
+        story.append(Spacer(1, 0.5 * inch)) # Increased spacer to fix overlap with subtitle
+        story.append(Paragraph("Análisis de concentración por actividad económica y ubicación.", styles['CustomMeta']))
+        story.append(Spacer(1, 0.8 * inch)) # Increased spacer to prevent overlap
+
+        try:
+            # 1. Donut Chart (CIIU) + Location Table (Combined Chart)
+            # Use GraphGenerator to get the base64 string
+            gen = GraphGenerator(df_all)
+            b64_combined = gen.get_combined_chart_base64()
+            
+            img_combined = None
+            if isinstance(b64_combined, str) and b64_combined.startswith("data:image/png;base64,"):
+                img_bytes = base64.b64decode(b64_combined.split(",", 1)[1])
+                bio = io.BytesIO(img_bytes)
+                
+                # Calculate available width
+                available_width = (page_width - 1.0 * inch) if page_width else (7.5 * inch)
+                # Height proportional to current generator figure (22x8)
+                target_height = available_width * (8.0 / 22.0)
+                
+                img_combined = Image(bio, width=available_width, height=target_height)
+                img_combined.hAlign = 'CENTER'
+
+            if img_combined:
+                story.append(img_combined)
+            else:
+                story.append(Paragraph("No hay datos suficientes para generar el gráfico.", styles['CompactBody']))
+
+        except Exception as e:
+             story.append(Paragraph(f"No disponible: {str(e)}", styles['CompactBody']))
+        
+        story.append(Spacer(1, 0.5 * inch)) # SCALED Spacer
+
+
     # --------------------
     # Secciones
     # --------------------
-    def _cover_compact(self, story, styles, empresa_id):
+    def _cover_compact(self, story, styles, empresa_id, page_width=None):
         # Header en Tabla: Logo | Título + Meta
         logo_img = None
-        try:
-            logo_path = os.path.join(os.getcwd(), "Logo.png")
-            if os.path.exists(logo_path):
-                logo_img = Image(logo_path, width=2.0 * inch, height=0.75 * inch)
-                logo_img.hAlign = 'LEFT'
-        except Exception:
-            pass
+        # ELIMINADO LOGO POR SOLICITUD DEL USUARIO
+        # try:
+        #    logo_path = os.path.join(os.getcwd(), "Logo.png")
+        #    if os.path.exists(logo_path):
+        #        logo_img = Image(logo_path, width=2.0 * inch, height=0.75 * inch)
+        #        logo_img.hAlign = 'LEFT'
+        # except Exception:
+        #    pass
             
+        # User requested using image colors (#2a9d8f Green, #e9c46a Sand, #2AB4EB Blue)
+        # Adding color to the header text
         title_text = [
-            Paragraph("REPORTE EJECUTIVO DE RIESGO", styles['CustomTitleCompact']),
-            Paragraph(f"Empresa ID: {empresa_id} · Generado: {datetime.now():%d/%m/%Y %H:%M}", styles['CustomMeta']),
-            Paragraph("Detección de relaciones ocultas entre Clientes, Proveedores y Empleados.", styles['CustomMeta'])
+            Paragraph(f"<font color='#2a9d8f'><b>Empresa ID: {empresa_id}</b></font> <font color='#e9c46a'>·</font> Generado: {datetime.now():%d/%m/%Y %H:%M}", styles['CustomMeta'])
         ]
         
+        # Calculate available width
+        available_width = (page_width - 1.0 * inch) if page_width else (7.5 * inch)
+        
         if logo_img:
+            col_widths = [2.2 * inch, available_width - 2.2 * inch]
             data = [[logo_img, title_text]]
-            col_widths = [2.2 * inch, 5.0 * inch]
         else:
+            col_widths = [available_width]
             data = [[title_text]]
-            col_widths = [7.2 * inch]
             
         t = Table(data, colWidths=col_widths)
         t.setStyle(TableStyle([
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
             ('LEFTPADDING', (0,0), (-1,-1), 0),
             ('RIGHTPADDING', (0,0), (-1,-1), 0),
-            ('TOPPADDING', (0,0), (-1,-1), 0),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+            ('TOPPADDING', (0,0), (-1,-1), 40),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 20),
         ]))
         story.append(t)
-        story.append(Spacer(1, 0.2 * inch))
+        story.append(Spacer(1, 0.6 * inch))
 
     def _cover(self, story, styles, empresa_id):
         # Deprecated for single page, kept for reference if needed
         self._cover_compact(story, styles, empresa_id)
 
-    def _metric_row(self, story, styles, metrics):
+    def _metric_row(self, story, styles, metrics, page_width=None):
         # Create a single table row with multiple columns (one per metric)
         cells = []
         for val, label, sublabel, color in metrics:
             # Inner table for the cell content: Circle | Text Stack
-            d = Drawing(40, 40)
-            d.add(Circle(20, 20, 18, fillColor=color, strokeColor=color))
+            # SCALED FOR 3020px (approx 5x)
+            d = Drawing(180, 180)
+            d.add(Circle(90, 90, 85, fillColor=color, strokeColor=color))
             # Center the value inside the circle
             # Adjust font size based on value length to fit in circle
-            fsize = 11 if len(str(val)) <= 3 else 9
-            d.add(String(20, 20 - (fsize/3), str(val), fillColor=colors.white, textAnchor='middle', fontSize=fsize, fontName='Helvetica-Bold'))
+            fsize = 48 if len(str(val)) <= 3 else 42
+            d.add(String(90, 90 - (fsize/3), str(val), fillColor=colors.white, textAnchor='middle', fontSize=fsize, fontName='Helvetica-Bold'))
             
             # Text stack: Label \n Sublabel
             # Use smaller font for sublabel
             text_col = []
             text_col.append(Paragraph(f"<b>{label}</b>", styles['CompactBody']))
             if sublabel:
-                text_col.append(Paragraph(f"<font color='#666666' size=7>{sublabel}</font>", styles['CompactBody']))
+                text_col.append(Paragraph(f"<font color='#666666' size=35>{sublabel}</font>", styles['CompactBody']))
             
             # Combine Drawing and Text in a nested table
-            # Column widths: Drawing (fixed), Text (flexible)
-            cell_content = Table([[d, text_col]], colWidths=[0.6*inch, 1.2*inch])
+            # Adjusted Column widths to prevent overlap: 
+            # Circle Column (3.0 inch) + Text Column (6.0 inch)
+            cell_content = Table([[d, text_col]], colWidths=[3.0*inch, 6.0*inch])
             cell_content.setStyle(TableStyle([
                 ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-                ('LEFTPADDING', (0,0), (-1,-1), 0),
+                ('LEFTPADDING', (0,0), (-1,-1), 0),   # Padding for Circle cell
                 ('RIGHTPADDING', (0,0), (-1,-1), 0),
+                ('LEFTPADDING', (1,0), (1,0), 20),    # Extra padding for Text cell to separate from circle
                 ('TOPPADDING', (0,0), (-1,-1), 0),
                 ('BOTTOMPADDING', (0,0), (-1,-1), 0),
             ]))
@@ -395,21 +461,21 @@ class PDFRiskReportService:
         # Calculate width per cell based on page width
         # Letter width = 8.5 inch. Margins = 0.5 left + 0.5 right = 1.0. Content = 7.5 inch.
         # 4 metrics -> 1.8 inch per cell approx
-        col_w = 1.8 * inch
+        available_width = (page_width - 1.0 * inch) if page_width else (7.5 * inch)
+        col_w = available_width / len(cells)
         t = Table([cells], colWidths=[col_w] * len(cells))
         t.setStyle(TableStyle([
             ('BACKGROUND', (0,0), (-1,-1), colors.white),
-            ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#e5e7eb')), # Outer border
-            ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor('#e5e7eb')), # Vertical separators
+            ('BOX', (0,0), (-1,-1), 1.0, colors.HexColor('#e5e7eb')),
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-            ('LEFTPADDING', (0,0), (-1,-1), 5),
-            ('RIGHTPADDING', (0,0), (-1,-1), 5),
-            ('TOPPADDING', (0,0), (-1,-1), 8),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+            ('LEFTPADDING', (0,0), (-1,-1), 16),
+            ('RIGHTPADDING', (0,0), (-1,-1), 16),
+            ('TOPPADDING', (0,0), (-1,-1), 25), # Increased padding to prevent circle clipping
+            ('BOTTOMPADDING', (0,0), (-1,-1), 25), # Increased padding
         ]))
         story.append(t)
 
-    def _kpi_panel(self, story, styles, df_all, empresa_id, df_clientes, df_proveedores, df_empleados, entidades_cruces=None):
+    def _kpi_panel(self, story, styles, df_all, empresa_id, df_clientes, df_proveedores, df_empleados, entidades_cruces=None, page_width=None):
         df = df_all[df_all.get('id_empresa', pd.Series()).astype(str) == str(empresa_id)]
         total = len(df)
         s = df.get('riesgo', pd.Series()).astype(str).str.upper()
@@ -437,15 +503,24 @@ class PDFRiskReportService:
         pct_alto = round((alto / max(total, 1)) * 100, 1)
         
         story.append(Paragraph("Panel Ejecutivo de Distribución de Riesgo", styles['CustomH1Compact']))
+        story.append(Spacer(1, 0.4 * inch)) # Added spacer to prevent overlap with KPI box
         
+        # Helper for formatting numbers
+        def fmt(n):
+            return f"{n:,.0f}".replace(",", ".")
+            
+        # Helper for percentages
+        def fmt_pct(n):
+            return f"{n}".replace(".", ".") # Keep dot as decimal separator as per user request (4.2%)
+
         # Metrics format: (Value, Main Label, Sub Label, Color)
         self._metric_row(story, styles, [
-            (str(total), 'Total Registros', 'Analizados', COLORS['secondary']), # Blue
-            (str(cruces_count), 'Contrapartes', 'con Cruces', COLORS['warning']), # Yellow
-            (f"{score5}", 'Riesgo Promedio', 'Escala 1-5', COLORS['purple']), # Purple
-            (f"{alto}", 'Alto riesgo', f"{pct_alto}% del total", COLORS['danger']), # Red
-        ])
-        story.append(Spacer(1, 0.15 * inch))
+            (fmt(total), 'Total Registros', 'Analizados', COLORS['secondary']), # Green
+            (fmt(cruces_count), 'Contrapartes', 'con Cruces', COLORS['warning']), # Yellow
+            (f"{score5}", 'Riesgo Promedio', 'Escala 1-5', COLORS['secondary']), # Green
+            (fmt(alto), 'Alto riesgo', f"{fmt_pct(pct_alto)}% del total", '#e9c46a'), # Sand/Yellow (Replacing Danger/Red)
+        ], page_width=page_width)
+        story.append(Spacer(1, 0.5 * inch)) # SCALED Spacer
 
     def _risk_region_country(self, story, styles, df_all, empresa_id):
         # Contenedor para KeepInFrame
@@ -606,14 +681,15 @@ class PDFRiskReportService:
                 if res and res.get('base64'):
                     img_bytes = base64.b64decode(res['base64'].split(",", 1)[1])
                     bio = io.BytesIO(img_bytes)
-                    img = Image(bio, width=6.0 * inch, height=6.0 * inch)
+                    # SCALED: 30x30 inch
+                    img = Image(bio, width=30.0 * inch, height=30.0 * inch)
                     story.append(img)
             except Exception as e:
                 story.append(Paragraph(f"No se pudo generar el mapa de Colombia: {str(e)}", styles['CompactBody']))
         else:
              story.append(Paragraph("No hay datos geográficos suficientes para el mapa de Colombia.", styles['CompactBody']))
 
-        story.append(Spacer(1, 0.2 * inch))
+        story.append(Spacer(1, 1.0 * inch)) # SCALED Spacer
 
         # 2. World Map
         story.append(Paragraph("Mapa Mundial: Jurisdicciones y Cooperación", styles['CustomH1']))
@@ -634,15 +710,15 @@ class PDFRiskReportService:
                 if res and res.get('base64'):
                     img_bytes = base64.b64decode(res['base64'].split(",", 1)[1])
                     bio = io.BytesIO(img_bytes)
-                    # World map is wider
-                    img = Image(bio, width=7.0 * inch, height=3.5 * inch)
+                    # SCALED: 35x17.5 inch
+                    img = Image(bio, width=35.0 * inch, height=17.5 * inch)
                     story.append(img)
             except Exception as e:
                 story.append(Paragraph(f"No se pudo generar el mapa mundial: {str(e)}", styles['CompactBody']))
         else:
              story.append(Paragraph("No hay información de países para el mapa mundial.", styles['CompactBody']))
         
-        story.append(Spacer(1, 0.2 * inch))
+        story.append(Spacer(1, 1.0 * inch)) # SCALED Spacer
 
     def _ai_recommendations_compact(
         self, story, styles, empresa_id, df_alto, df_clientes, df_proveedores, df_empleados
@@ -725,18 +801,24 @@ class PDFRiskReportService:
                     f"${float(pick(r, cols_map['Monto']) or 0):,.2f}",
                     str(pick(r, cols_map['Tipo']))
                 ])
-            t = Table(data, repeatRows=1)
+            
+            # SCALED WIDTHS: Total ~38-40 inches
+            t = Table(data, repeatRows=1, colWidths=[
+                2.6*inch, 5.2*inch, 3.9*inch, 2.6*inch, 10.4*inch, 5.2*inch, 5.2*inch, 5.2*inch
+            ])
             t.setStyle(TableStyle([
                 ('BACKGROUND', (0,0), (-1,0), COLORS['light']),
-                ('TEXTCOLOR', (0,0), (-1,0), COLORS['primary']),
+                ('TEXTCOLOR', (0,0), (-1,0), COLORS['secondary']),
                 ('ALIGN', (0,0), (-1,-1), 'LEFT'),
                 ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0,0), (-1,0), 8),
-                ('FONTSIZE', (0,1), (-1,-1), 8),
-                ('GRID', (0,0), (-1,-1), 0.4, colors.HexColor('#dddddd')),
+                ('FONTSIZE', (0,0), (-1,0), 40), # SCALED
+                ('FONTSIZE', (0,1), (-1,-1), 40), # SCALED
+                ('GRID', (0,0), (-1,-1), 2.0, colors.HexColor('#dddddd')), # SCALED
                 ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#fbfbfb')]),
-                ('TOPPADDING', (0,0), (-1,-1), 2),
-                ('BOTTOMPADDING', (0,0), (-1,-1), 2),
+                ('TOPPADDING', (0,0), (-1,-1), 10), # SCALED
+                ('BOTTOMPADDING', (0,0), (-1,-1), 10), # SCALED
+                ('LEFTPADDING', (0,0), (-1,-1), 10),
+                ('RIGHTPADDING', (0,0), (-1,-1), 10),
             ]))
             story.append(t)
         except Exception:
@@ -805,18 +887,24 @@ class PDFRiskReportService:
                     str(pick(row, cols_map['Tipo'])),
                     "; ".join(ms)
                 ])
-            t = Table(data, repeatRows=1)
+            
+            # SCALED WIDTHS: Total ~39.5 inches
+            t = Table(data, repeatRows=1, colWidths=[
+                2.5*inch, 5.5*inch, 4.0*inch, 2.5*inch, 5.5*inch, 5.5*inch, 14.0*inch
+            ])
             t.setStyle(TableStyle([
                 ('BACKGROUND', (0,0), (-1,0), COLORS['light']),
-                ('TEXTCOLOR', (0,0), (-1,0), COLORS['primary']),
+                ('TEXTCOLOR', (0,0), (-1,0), COLORS['secondary']),
                 ('ALIGN', (0,0), (-1,-1), 'LEFT'),
                 ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0,0), (-1,0), 8),
-                ('FONTSIZE', (0,1), (-1,-1), 8),
-                ('GRID', (0,0), (-1,-1), 0.4, colors.HexColor('#dddddd')),
+                ('FONTSIZE', (0,0), (-1,0), 40), # SCALED
+                ('FONTSIZE', (0,1), (-1,-1), 40), # SCALED
+                ('GRID', (0,0), (-1,-1), 2.0, colors.HexColor('#dddddd')), # SCALED
                 ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#fbfbfb')]),
-                ('TOPPADDING', (0,0), (-1,-1), 2),
-                ('BOTTOMPADDING', (0,0), (-1,-1), 2),
+                ('TOPPADDING', (0,0), (-1,-1), 10), # SCALED
+                ('BOTTOMPADDING', (0,0), (-1,-1), 10), # SCALED
+                ('LEFTPADDING', (0,0), (-1,-1), 10),
+                ('RIGHTPADDING', (0,0), (-1,-1), 10),
             ]))
             story.append(t)
         except Exception:
@@ -824,13 +912,13 @@ class PDFRiskReportService:
         story.append(Spacer(1, 0.1 * inch))
 
     def _entity_crosses_table(self, story, styles, detalles, empresa_id):
-        story.append(Paragraph("Detalle de Cruces Detectados (Top 20)", styles['CompactH1']))
+        story.append(Paragraph("Detalle de Cruces Detectados (Top 10)", styles['CompactH1']))
         
         if not detalles:
             story.append(Paragraph("No hay detalles disponibles.", styles['CompactBody']))
             return
 
-        # Headers
+        # Headers - SCALED for 3020px
         headers = ["ID Entidad", "Roles", "Trans. Cliente", "Trans. Proveedor", "Pagos Empleado"]
         data = [headers]
         
@@ -841,22 +929,70 @@ class PDFRiskReportService:
                                      (x.get('empleado', {}) or {}).get('suma', 0)), 
                       reverse=True)
 
-        for d in detalles[:20]: # Limitar a 20 para que quepa
+        for d in detalles[:10]: # Limitar a 10
             id_entidad = d['id_contraparte']
             cats = d['conteo_categorias']
             
-            # Helper para formatear montos y manejar NaN
-            def fmt_monto(val_dict):
-                if not val_dict:
-                    return "—"
-                m = val_dict.get('suma', 0)
-                if pd.isna(m):
-                    m = 0
-                return f"${m:,.0f}"
+            # Helper para formatear celdas con detalle (Cant, Monto, Riesgo)
+            def fmt_details(val_dict):
+                # Ahora val_dict siempre existe, verificamos la cantidad
+                cant = val_dict.get('cantidad', 0)
+                
+                if cant == 0:
+                    # Estilo N/A: Cant: 0 y badge N/A
+                    # SCALED FONTS
+                    line1 = f"<font size=35 color='#555555'>Cant: 0</font>"
+                    line2 = f"<font size=35 color='#663399' backcolor='#f3e5f5'><b> N/A </b></font>" # Purple style for N/A (Purple is OK, user only banned Red)
+                    return Paragraph(f"{line1}<br/>{line2}", styles['CompactBody'])
+                
+                suma = val_dict.get('suma', 0)
+                riesgo = val_dict.get('riesgo', 0)
+                
+                # Obtener lista de transacciones
+                tx_list = val_dict.get('transacciones', [])
+                tx_str = ""
+                if tx_list:
+                    # Formatear valores
+                    formatted_tx = [f"${float(v):,.0f}" for v in tx_list[:3]]
+                    tx_str = "<br/>".join(formatted_tx)
+                    if len(tx_list) > 3:
+                        tx_str += f"<br/><i>(+{len(tx_list)-3} más)</i>"
+                    # SCALED FONTS
+                    tx_str = f"<font size=30 color='#666666'>{tx_str}</font><br/>"
 
-            cli_str = fmt_monto(d.get('cliente'))
-            prov_str = fmt_monto(d.get('proveedor'))
-            emp_str = fmt_monto(d.get('empleado'))
+                # Color y texto de riesgo
+                # User Palette: Green (#2a9d8f), Sand (#e9c46a), Blue (#2AB4EB)
+                risk_color = "#2a9d8f" # Verde (Bajo)
+                risk_text = f"Riesgo {riesgo}"
+                
+                # Normalizar riesgo para lógica de color
+                r_val = 0
+                try:
+                    r_val = int(riesgo)
+                except:
+                    if str(riesgo).upper() in ['ALTO', 'CRITICO', '5', '4']: r_val = 5
+                    elif str(riesgo).upper() in ['MEDIO', '3']: r_val = 3
+                
+                if r_val >= 4:
+                    risk_color = "#e9c46a" # Sand/Yellow (Replacing Red)
+                    risk_text = f"ALTO ({riesgo})"
+                elif r_val == 3:
+                    risk_color = "#2AB4EB" # Blue (Replacing Orange)
+
+                # Construir contenido
+                # Checkmark + Cantidad
+                # SCALED FONTS
+                line1 = f"<font color='#2a9d8f' size=40>✓</font> <font size=35 color='#555555'>Cant: {cant}</font>"
+                # Monto
+                line2 = f"<font size=40><b>${suma:,.0f}</b></font>"
+                # Badge de Riesgo (Texto coloreado)
+                line3 = f"<font size=35 color='{risk_color}'><b>{risk_text}</b></font>"
+                
+                return Paragraph(f"{line1}<br/>{tx_str}{line2}<br/>{line3}", styles['CompactBody'])
+
+            cli_cell = fmt_details(d.get('cliente'))
+            prov_cell = fmt_details(d.get('proveedor'))
+            emp_cell = fmt_details(d.get('empleado'))
             
             # Estilo para ID (Negrita si es riesgo alto)
             id_style = styles['CompactBodySmall']
@@ -864,63 +1000,114 @@ class PDFRiskReportService:
             data.append([
                 Paragraph(str(id_entidad), id_style),
                 str(cats),
-                cli_str,
-                prov_str,
-                emp_str
+                cli_cell,
+                prov_cell,
+                emp_cell
             ])
 
         # Estilo de tabla
-        # Ancho total disponible aprox 7.5 inch
-        t = Table(data, colWidths=[2.0*inch, 0.8*inch, 1.5*inch, 1.5*inch, 1.5*inch])
+        # Ancho total disponible aprox 28-30 inch for 3020px width
+        # Previous: [1.8*inch, 0.7*inch, 1.6*inch, 1.6*inch, 1.6*inch] (Total ~7.3)
+        # Scaled x4 approx: [7.2, 2.8, 6.4, 6.4, 6.4]
+        # Let's adjust to fit 3020px (approx 41 inches total width, minus margins ~2 inches = 39 inches)
+        # Let's use: 9, 3.5, 8, 8, 8 = 36.5 inches
+        t = Table(data, colWidths=[9.0*inch, 3.5*inch, 8.0*inch, 8.0*inch, 8.0*inch])
         t.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,0), COLORS['primary']),
+            ('BACKGROUND', (0,0), (-1,0), COLORS['secondary']),
             ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-            ('ALIGN', (0,0), (1,0), 'LEFT'), # Headers left (except ID/Roles maybe?)
-            ('ALIGN', (2,1), (-1,-1), 'RIGHT'), # Montos a la derecha
-            ('ALIGN', (0,1), (1,-1), 'LEFT'), # ID y Roles a la izquierda
+            ('ALIGN', (0,0), (1,0), 'LEFT'), 
+            ('ALIGN', (2,0), (-1,-1), 'LEFT'), # Alinear detalles a la izquierda
+            ('VALIGN', (0,0), (-1,-1), 'TOP'), # Alinear arriba
             ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0,0), (-1,0), 9),
-            ('BOTTOMPADDING', (0,0), (-1,0), 6),
-            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#e0e0e0')),
+            ('FONTSIZE', (0,0), (-1,0), 45), # SCALED Header Font
+            ('BOTTOMPADDING', (0,0), (-1,0), 30), # SCALED Padding
+            ('TOPPADDING', (0,0), (-1,0), 30),
+            ('GRID', (0,0), (-1,-1), 2.5, colors.HexColor('#e0e0e0')), # SCALED Grid
             ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f9f9f9')]),
-            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('LEFTPADDING', (0,0), (-1,-1), 20), # SCALED Padding
+            ('RIGHTPADDING', (0,0), (-1,-1), 20),
+            ('TOPPADDING', (0,1), (-1,-1), 20), # SCALED Padding
+            ('BOTTOMPADDING', (0,1), (-1,-1), 20),
         ]))
         story.append(t)
-        story.append(Spacer(1, 0.2 * inch))
+        story.append(Spacer(1, 0.1 * inch))
 
     def _styles(self):
         s = getSampleStyleSheet()
         # Ensure Helvetica (Standard Sans-Serif) is used to match the clean look
-        s.add(ParagraphStyle('CustomTitle', fontName='Helvetica-Bold', fontSize=18, alignment=TA_CENTER, textColor=COLORS['primary'], spaceAfter=20, leading=22))
-        s.add(ParagraphStyle('CustomTitleCompact', fontName='Helvetica-Bold', fontSize=16, alignment=TA_LEFT, textColor=COLORS['primary'], leading=20))
-        s.add(ParagraphStyle('CustomH1', fontName='Helvetica-Bold', fontSize=14, textColor=COLORS['primary'], spaceBefore=20, spaceAfter=10))
-        s.add(ParagraphStyle('CustomH1Compact', fontName='Helvetica-Bold', fontSize=12, textColor=COLORS['primary'], spaceBefore=5, spaceAfter=5))
-        s.add(ParagraphStyle('CustomBody', fontName='Helvetica', fontSize=10, alignment=TA_JUSTIFY, leading=14))
-        s.add(ParagraphStyle('CustomMeta', fontName='Helvetica', fontSize=9, alignment=TA_LEFT, textColor=COLORS['gray']))
-        s.add(ParagraphStyle('CompactH1', fontName='Helvetica-Bold', fontSize=12, textColor=COLORS['primary'], spaceBefore=10, spaceAfter=6))
-        s.add(ParagraphStyle('CompactBody', fontName='Helvetica', fontSize=9, alignment=TA_JUSTIFY, leading=12))
-        s.add(ParagraphStyle('CompactBodySmall', fontName='Helvetica', fontSize=8, alignment=TA_LEFT, leading=10, textColor=COLORS['dark']))
-        s.add(ParagraphStyle('FooterText', fontName='Helvetica', fontSize=8, alignment=TA_CENTER, textColor=COLORS['gray'], leading=10))
+        # User requested Green (#2a9d8f) for titles instead of Primary (Pink)
+        title_color = COLORS['secondary'] # #2a9d8f
+        
+        # SCALED FOR 3020px WIDTH (approx 5x)
+        s.add(ParagraphStyle('CustomTitle', fontName='Helvetica-Bold', fontSize=80, alignment=TA_CENTER, textColor=title_color, spaceAfter=80, leading=96))
+        s.add(ParagraphStyle('CustomTitleCompact', fontName='Helvetica-Bold', fontSize=72, alignment=TA_LEFT, textColor=title_color, leading=90))
+        s.add(ParagraphStyle('CustomH1', fontName='Helvetica-Bold', fontSize=64, textColor=title_color, spaceBefore=80, spaceAfter=40))
+        s.add(ParagraphStyle('CustomH1Compact', fontName='Helvetica-Bold', fontSize=54, textColor=title_color, spaceBefore=20, spaceAfter=20))
+        s.add(ParagraphStyle('CustomBody', fontName='Helvetica', fontSize=44, alignment=TA_JUSTIFY, leading=62))
+        s.add(ParagraphStyle('CustomMeta', fontName='Helvetica', fontSize=40, alignment=TA_LEFT, textColor=COLORS['gray']))
+        s.add(ParagraphStyle('CompactH1', fontName='Helvetica-Bold', fontSize=54, textColor=title_color, spaceBefore=40, spaceAfter=24))
+        s.add(ParagraphStyle('CompactBody', fontName='Helvetica', fontSize=40, alignment=TA_JUSTIFY, leading=58))
+        s.add(ParagraphStyle('CompactBodySmall', fontName='Helvetica', fontSize=36, alignment=TA_LEFT, leading=48, textColor=COLORS['dark']))
+        s.add(ParagraphStyle('FooterText', fontName='Helvetica', fontSize=40, alignment=TA_CENTER, textColor=COLORS['gray'], leading=50))
         return s
 
     # --------------------
     # Stubs (mantén tus implementaciones reales)
     # --------------------
-    def _load_dataframes(self):
+    def _load_dataframes(self, empresa_id: Optional[int] = None):
         try:
-            base = "data_provisional"
-            cli_path = os.path.join(base, "datos prueba clientes.csv")
-            pro_path = os.path.join(base, "datos prueba proveedores.csv")
-            emp_path = os.path.join(base, "datos prueba.csv")
-            df_cli = pd.read_csv(cli_path) if os.path.exists(cli_path) else pd.DataFrame()
-            df_pro = pd.read_csv(pro_path) if os.path.exists(pro_path) else pd.DataFrame()
-            df_emp = pd.read_csv(emp_path) if os.path.exists(emp_path) else pd.DataFrame()
+            db = SourceSessionLocal()
+            
+            # 1. Cargar clientes
+            query_cli = db.query(Cliente)
+            if empresa_id:
+                query_cli = query_cli.filter(Cliente.id_empresa == empresa_id)
+            df_cli = pd.read_sql(query_cli.statement, db.bind)
+            
+            # 2. Cargar proveedores
+            query_pro = db.query(Proveedor)
+            if empresa_id:
+                query_pro = query_pro.filter(Proveedor.id_empresa == empresa_id)
+            df_pro = pd.read_sql(query_pro.statement, db.bind)
+            
+            # 3. Cargar empleados
+            query_emp = db.query(Empleado)
+            if empresa_id:
+                query_emp = query_emp.filter(Empleado.id_empresa == empresa_id)
+            df_emp = pd.read_sql(query_emp.statement, db.bind)
+            
+            # 4. Cargar CIIU Referencia
+            df_ciiu_ref = pd.read_sql(db.query(AuxiliarCiiu).statement, db.bind)
+            
+            db.close()
+            
+            # Merge CIIU Description
+            if not df_ciiu_ref.empty:
+                # Prepare ref df: ciiu (code) -> descripcion
+                # Ensure code is string and stripped
+                if 'ciiu' in df_ciiu_ref.columns:
+                    df_ciiu_ref['ciiu'] = df_ciiu_ref['ciiu'].astype(str).str.strip()
+                    
+                    # Merge for Cliente
+                    if not df_cli.empty and 'ciiu' in df_cli.columns:
+                         df_cli['ciiu'] = df_cli['ciiu'].astype(str).str.strip()
+                         df_cli = pd.merge(df_cli, df_ciiu_ref[['ciiu', 'descripcion']], on='ciiu', how='left')
+                         df_cli.rename(columns={'descripcion': 'ciiu_descripcion'}, inplace=True)
+
+                    # Merge for Proveedor (if column exists)
+                    if not df_pro.empty and 'ciiu' in df_pro.columns:
+                         df_pro['ciiu'] = df_pro['ciiu'].astype(str).str.strip()
+                         df_pro = pd.merge(df_pro, df_ciiu_ref[['ciiu', 'descripcion']], on='ciiu', how='left')
+                         df_pro.rename(columns={'descripcion': 'ciiu_descripcion'}, inplace=True)
+            
+            # Normalizar columnas
             if not df_cli.empty and 'tipo_contraparte' not in df_cli.columns:
                 df_cli['tipo_contraparte'] = 'cliente'
             if not df_pro.empty and 'tipo_contraparte' not in df_pro.columns:
                 df_pro['tipo_contraparte'] = 'proveedor'
             if not df_emp.empty and 'tipo_contraparte' not in df_emp.columns:
                 df_emp['tipo_contraparte'] = 'empleado'
+            
             if not df_emp.empty:
                 if 'valor' in df_emp.columns and 'valor_transaccion' not in df_emp.columns:
                     df_emp = df_emp.rename(columns={'valor': 'valor_transaccion'})
@@ -931,8 +1118,10 @@ class PDFRiskReportService:
                         'MEDIO': 'MEDIO',
                         'BAJO': 'BAJO'
                     }).fillna('BAJO')
-            # Unificar clientes y proveedores
+            
+            # Unificar clientes y proveedores para analisis general
             df_all = pd.concat([df_cli, df_pro], ignore_index=True, sort=False)
+            
             # Asegurar columna riesgo
             if not df_all.empty and 'riesgo' not in df_all.columns:
                 if 'nivel_riesgo' in df_all.columns:
@@ -952,18 +1141,24 @@ class PDFRiskReportService:
                     df_all['riesgo'] = df_all['orden_clasificacion_del_riesgo'].apply(map_ord)
                 else:
                     df_all['riesgo'] = 'BAJO'
+            
             # Asegurar columnas clave
             for d in (df_all, df_cli, df_pro, df_emp):
                 if 'id_empresa' not in d.columns:
-                    d['id_empresa'] = ''
+                    d['id_empresa'] = empresa_id if empresa_id else ''
+            
             return df_all, df_cli, df_pro, df_emp
-        except Exception:
+            
+        except Exception as e:
+            print(f"⚠️ Error loading dataframes from DB: {e}")
             # Fallback seguro
             cols = ['id_empresa', 'riesgo', 'valor_transaccion', 'tipo_contraparte']
             return pd.DataFrame(columns=cols), pd.DataFrame(columns=cols), pd.DataFrame(columns=cols), pd.DataFrame(columns=cols)
 
     def _filter_high_risk(self, df):
-        return df[df.get('riesgo', '').astype(str).str.upper() == 'ALTO']
+        if df.empty or 'riesgo' not in df.columns:
+            return pd.DataFrame(columns=df.columns)
+        return df[df['riesgo'].astype(str).str.upper() == 'ALTO']
 
     def _avg_score(self, df):
         return float(df.get('score', pd.Series()).mean() or 0)

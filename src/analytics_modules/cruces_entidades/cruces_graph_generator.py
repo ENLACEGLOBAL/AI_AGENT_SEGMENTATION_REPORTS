@@ -34,26 +34,25 @@ class CrucesGraphGenerator:
             'ytick.color': '#555555'
         })
         
-        # Diseño 1x3 horizontal para ocupar menos altura y encajar mejor en el reporte compacto
-        fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+        fig, axes = plt.subplots(1, 3, figsize=(30, 5))
         
         # 1. Distribución de Riesgo (Barra Simple)
         ax = axes[0]
         labels = ['Bajo', 'Medio', 'Alto']
         values = [dist.get('bajo', 0), dist.get('medio', 0), dist.get('alto', 0)]
-        colors = ['#2a9d8f', '#f4a261', '#e76f51'] # Colores pastel/modernos
+        colors = ['#2a9d8f', '#e9c46a', "#2AB4EB"] # Green, Sand, Blue (No Red)
         
         bars = ax.bar(labels, values, color=colors, width=0.6)
         
-        # Etiquetas limpias sobre barras
         for bar in bars:
             height = bar.get_height()
             if height > 0:
                 ax.text(bar.get_x() + bar.get_width()/2., height + (max(values)*0.02),
                         f'{int(height)}',
-                        ha='center', va='bottom', fontsize=10, fontweight='bold', color='#333333')
+                        ha='center', va='bottom', fontsize=22, fontweight='bold', color='#333333')
                         
-        ax.set_title('Nivel de Riesgo', fontsize=12, fontweight='bold', pad=15)
+        ax.set_title('Nivel de Riesgo', fontsize=32, fontweight='bold', pad=18)
+        ax.tick_params(axis='x', labelsize=16)
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
         ax.spines['left'].set_visible(False)
@@ -69,35 +68,43 @@ class CrucesGraphGenerator:
         }
         labels_pie = [labels_map.get(k, k) for k in tipos.keys()]
         values_pie = list(tipos.values())
-        colors_pie = ['#264653', '#2a9d8f', '#e9c46a', '#f4a261']
+        colors_pie = ['#264653', '#2a9d8f', '#e9c46a', '#2AB4EB'] # Blue, Green, Sand, Light Blue
+        
+        # Helper para mostrar cantidad exacta
+        def make_autopct(values):
+            def my_autopct(pct):
+                total = sum(values)
+                val = int(round(pct*total/100.0))
+                return f'{val}' if val > 0 else ''
+            return my_autopct
         
         if sum(values_pie) > 0:
-            wedges, texts, autotexts = ax.pie(values_pie, labels=labels_pie, autopct='%1.0f%%', 
+            wedges, texts, autotexts = ax.pie(values_pie, labels=labels_pie, autopct=make_autopct(values_pie), 
                                             colors=colors_pie, startangle=90, pctdistance=0.85,
-                                            wedgeprops=dict(width=0.4, edgecolor='white'))
-            plt.setp(autotexts, size=9, weight="bold", color="white")
-            plt.setp(texts, size=9)
+                                            wedgeprops=dict(width=0.35, edgecolor='white'))
+            plt.setp(autotexts, size=16, weight="bold", color="white")
+            plt.setp(texts, size=14)
         else:
-            ax.text(0.5, 0.5, "Sin datos", ha='center', va='center', color='#999999')
+            ax.text(0.5, 0.5, "Sin datos", ha='center', va='center', color='#999999', fontsize=16)
             
-        ax.set_title('Tipos de Cruce', fontsize=12, fontweight='bold', pad=15)
+        ax.set_title('Tipos de Cruce', fontsize=32, fontweight='bold', pad=18)
 
         # 3. Distribución Categorías (Donut Chart simple)
         ax = axes[2]
         labels_cat = [f'{k} Cat.' for k in sorted(cat.keys())]
         values_cat = [cat[k] for k in sorted(cat.keys())]
-        colors_cat = ['#e9c46a', '#e76f51']
+        colors_cat = ['#e9c46a', '#264653'] # Sand, Dark Blue (Replaced Pink)
         
         if sum(values_cat) > 0:
-            wedges, texts, autotexts = ax.pie(values_cat, labels=labels_cat, autopct='%1.0f%%', 
+            wedges, texts, autotexts = ax.pie(values_cat, labels=labels_cat, autopct=make_autopct(values_cat), 
                                             colors=colors_cat, startangle=90, pctdistance=0.85,
-                                            wedgeprops=dict(width=0.4, edgecolor='white'))
-            plt.setp(autotexts, size=9, weight="bold", color="white")
-            plt.setp(texts, size=9)
+                                            wedgeprops=dict(width=0.35, edgecolor='white'))
+            plt.setp(autotexts, size=16, weight="bold", color="white")
+            plt.setp(texts, size=14)
         else:
-            ax.text(0.5, 0.5, "Sin datos", ha='center', va='center', color='#999999')
+            ax.text(0.5, 0.5, "Sin datos", ha='center', va='center', color='#999999', fontsize=16)
             
-        ax.set_title('Categorías Involucradas', fontsize=12, fontweight='bold', pad=15)
+        ax.set_title('Categorías Involucradas', fontsize=32, fontweight='bold', pad=18)
         
         plt.tight_layout()
         return self._fig_to_base64(fig)
@@ -124,14 +131,19 @@ class CrucesGraphGenerator:
         text_color = '#333333'
         subtext_color = '#666666'
         
+        # User requested: Pink, Green, Yellow (matching Logo)
+        # Using codes from PDF Service:
+        # Pink (Danger): #e40046
+        # Yellow (Warning): #f0b323
+        # Green (Success): #2a9d8f
         colors_risk = {
-            'bajo': '#2a9d8f',   # Teal
-            'medio': '#f4a261',  # Orange
-            'alto': '#e76f51'    # Red
+            'bajo': '#2a9d8f',   # Green
+            'medio': '#e9c46a',  # Light Yellow (Sand)
+            'alto': '#264653'    # Blue (Replaces Orange)
         }
         
-        # Configurar Figura (Ancha y compacta)
-        fig = plt.figure(figsize=(12, 5), facecolor=bg_color)
+        # Configurar Figura (Ancha y compacta) - Wider for 3020px PDF
+        fig = plt.figure(figsize=(30, 6), facecolor=bg_color)
         
         # Grid layout: 2 columnas principales (Riesgo | Tipos)
         gs = fig.add_gridspec(1, 2, width_ratios=[1.2, 1], wspace=0.1)
@@ -143,7 +155,7 @@ class CrucesGraphGenerator:
         
         # Título Sección
         ax1.text(0.5, 0.9, "DISTRIBUCIÓN DE RIESGO", ha='center', va='center', 
-                 color=text_color, fontsize=12, fontweight='bold')
+                 color=text_color, fontsize=40, fontweight='bold') # SCALED (Reduced)
         
         # Dibujar 3 Gauges
         riesgos = ['bajo', 'medio', 'alto']
@@ -156,28 +168,28 @@ class CrucesGraphGenerator:
             color = colors_risk[r_key]
             cx = centers[i]
             cy = 0.5
-            radius = 0.12
+            radius = 0.14
             
             # Fondo del anillo (gris muy claro)
-            wedge_bg = Wedge((cx, cy), radius, width=0.02, theta1=0, theta2=360, color='#E0E0E0')
+            wedge_bg = Wedge((cx, cy), radius, width=0.06, theta1=0, theta2=360, color='#E6E6E6')
             ax1.add_patch(wedge_bg)
             
             # Anillo de progreso
             theta_end = 360 * (pct / 100)
-            wedge_val = Wedge((cx, cy), radius, width=0.02, theta1=90, theta2=90-theta_end, color=color)
+            wedge_val = Wedge((cx, cy), radius, width=0.06, theta1=0, theta2=theta_end, color=color)
             ax1.add_patch(wedge_val)
             
-            # Texto Porcentaje (Centro)
-            ax1.text(cx, cy, f"{int(pct)}%", ha='center', va='center', 
-                     color=text_color, fontsize=14, fontweight='bold')
+            # Texto Porcentaje (Centro) -> Ahora Valor Exacto
+            ax1.text(cx, cy, f"{val}", ha='center', va='center', 
+                     color=color, fontsize=46, fontweight='bold')
             
             # Texto Etiqueta (Debajo)
             ax1.text(cx, cy - 0.18, labels_riesgo[i], ha='center', va='center', 
-                     color=color, fontsize=9, fontweight='bold')
+                     color='#333333', fontsize=30, fontweight='bold')
             
             # Texto Cantidad (Más abajo)
-            ax1.text(cx, cy - 0.23, f"{val} Entidades", ha='center', va='center', 
-                     color=subtext_color, fontsize=8)
+            ax1.text(cx, cy - 0.23, "Entidades", ha='center', va='center', 
+                     color=subtext_color, fontsize=24)
 
         # --- SECCIÓN 2: TIPOLOGÍA (Progress Bars) ---
         ax2 = fig.add_subplot(gs[1])
@@ -186,7 +198,7 @@ class CrucesGraphGenerator:
         
         # Título Sección
         ax2.text(0.5, 0.9, "TIPOLOGÍA DE CRUCES", ha='center', va='center', 
-                 color=text_color, fontsize=12, fontweight='bold')
+                 color=text_color, fontsize=40, fontweight='bold') # SCALED (Reduced)
         
         # Datos Tipos
         labels_map = {
@@ -220,7 +232,7 @@ class CrucesGraphGenerator:
                 ha='left',
                 va='bottom',
                 color='#000000',
-                fontsize=9,
+                fontsize=26, # SCALED (Reduced)
                 fontweight='bold',
                 bbox=dict(facecolor='white', edgecolor='none', alpha=0.9, boxstyle='round,pad=0.2')
             )
@@ -233,7 +245,7 @@ class CrucesGraphGenerator:
                 ha='right',
                 va='bottom',
                 color='#000000',
-                fontsize=10,
+                fontsize=30, # SCALED (Reduced)
                 fontweight='bold',
                 bbox=dict(facecolor='white', edgecolor='none', alpha=0.9, boxstyle='round,pad=0.2')
             )
@@ -244,8 +256,9 @@ class CrucesGraphGenerator:
                                    color='#F5F5F5', mutation_scale=10)
             ax2.add_patch(rect_bg)
             
-            # Barra Valor (Colores corporativos modernos)
-            bar_colors = ['#457b9d', '#e63946', '#f4a261', '#2a9d8f']
+            # Barra Valor (Colores corporativos modernos: Green, Yellow - User Request)
+            # Cycle: Green, Yellow, Blue (No Red/Pink)
+            bar_colors = ['#2a9d8f', '#e9c46a', '#264653', '#457b9d']
             c = bar_colors[i % len(bar_colors)]
             
             if val > 0:
@@ -258,13 +271,13 @@ class CrucesGraphGenerator:
                                         color=c, mutation_scale=10)
                 ax2.add_patch(rect_val)
 
-        plt.tight_layout()
+        # plt.tight_layout() # Removed to avoid UserWarning with manual patches
         return self._fig_to_base64(fig)
     
     def _fig_to_base64(self, fig) -> str:
         """Convierte figura matplotlib a base64"""
         buffer = io.BytesIO()
-        fig.savefig(buffer, format='png', bbox_inches='tight', dpi=150)
+        fig.savefig(buffer, format='png', bbox_inches='tight', dpi=300)
         plt.close(fig)
         buffer.seek(0)
         return f"data:image/png;base64,{base64.b64encode(buffer.read()).decode('utf-8')}"
@@ -276,7 +289,7 @@ class CrucesGraphGenerator:
         fig, ax = plt.subplots(figsize=(8, 6))
         labels = ['Bajo (1-2)', 'Medio (3)', 'Alto (4-5)']
         values = [dist['bajo'], dist['medio'], dist['alto']]
-        colors = ['#2a9d8f', '#f77f00', '#e63946']
+        colors = ['#2a9d8f', '#e9c46a', '#264653'] # Green, Yellow, Blue
         
         ax.bar(labels, values, color=colors, edgecolor='white', linewidth=2)
         ax.set_ylabel('Cantidad de Entidades', fontsize=12)
@@ -289,17 +302,23 @@ class CrucesGraphGenerator:
         """Gráfico de tipos de cruces con efecto relieve y filtrado de ceros"""
         tipos = self.analytics.get_tipos_cruces()
         
+        # Tipografía corporativa
+        plt.rcParams.update({
+            'font.family': 'sans-serif',
+            'font.sans-serif': ['Helvetica', 'Arial', 'DejaVu Sans'],
+            'text.color': '#333333'
+        })
         fig, ax = plt.subplots(figsize=(8, 6))
         
         # Datos brutos
-        raw_labels = ['Cliente +\nProveedor', 'Proveedor +\nEmpleado', 'Cliente +\nEmpleado', 'Triple\nCruce']
+        raw_labels = ['Cliente + Proveedor', 'Proveedor + Empleado', 'Cliente + Empleado', 'Triple Cruce']
         raw_values = [
             tipos.get('cliente_proveedor', 0),
             tipos.get('proveedor_empleado', 0),
             tipos.get('cliente_empleado', 0),
             tipos.get('triple_cruce', 0)
         ]
-        raw_colors = ['#00b4d8', '#f77f00', '#415a77', '#e63946']
+        raw_colors = ['#457b9d', '#264653', '#f4a261', '#2a9d8f'] # No Red
         
         # Filtrar valores cero para evitar superposición de etiquetas y sectores vacíos
         filtered_data = [(l, v, c) for l, v, c in zip(raw_labels, raw_values, raw_colors) if v > 0]
@@ -307,22 +326,27 @@ class CrucesGraphGenerator:
         if filtered_data:
             labels, values, colors = zip(*filtered_data)
             
-            # Efecto "Explode" para separar las rebanadas y dar relieve
-            explode = [0.05] * len(values) 
-            
-            wedges, texts, autotexts = ax.pie(values, labels=labels, autopct='%1.1f%%', colors=colors, 
-                                            startangle=140, pctdistance=0.85, labeldistance=1.1,
-                                            shadow=True, explode=explode, 
-                                            textprops={'fontsize': 11, 'fontweight': 'bold', 'color': '#333333'})
+            # Donut limpio y moderno
+            wedges, texts, autotexts = ax.pie(
+                values,
+                labels=labels,
+                autopct='%1.0f%%',
+                colors=colors,
+                startangle=90,
+                pctdistance=0.78,
+                labeldistance=1.05,
+                wedgeprops={'width': 0.35, 'edgecolor': 'white'},
+                textprops={'fontsize': 12, 'fontweight': 'bold', 'color': '#333333'}
+            )
             
             # Mejorar visibilidad del porcentaje (Blanco y negrita)
-            plt.setp(autotexts, size=10, weight="bold", color="white", path_effects=[])
+            plt.setp(autotexts, size=11, weight="bold", color="white")
             # Agregar borde negro suave al texto blanco para contraste si es necesario (opcional)
             
         else:
             ax.text(0.5, 0.5, "Sin Tipologías Detectadas", ha='center', va='center', fontsize=12, color='#666666')
             
-        ax.set_title('Tipos de Cruces Detectados', fontsize=14, fontweight='bold', pad=20)
+        ax.set_title('Tipología de Cruces', fontsize=15, fontweight='bold', pad=20)
         
         return self._fig_to_base64(fig)
     
@@ -333,7 +357,8 @@ class CrucesGraphGenerator:
         fig, ax = plt.subplots(figsize=(8, 6))
         labels = [f'{k} Categorías' for k in sorted(dist.keys())]
         values = [dist[k] for k in sorted(dist.keys())]
-        colors = ['#f77f00', '#e63946']
+        # Corporate palette (no red): Sand, Teal, Dark Blue, Light Blue
+        colors = ['#e9c46a', '#2a9d8f', '#264653', '#2AB4EB'][:max(1, len(values))]
         
         ax.pie(values, labels=labels, autopct='%1.1f%%', colors=colors,
                startangle=90, textprops={'fontsize': 12})
@@ -349,11 +374,14 @@ class CrucesGraphGenerator:
         empresas = [item['empresa'] for item in top]
         cruces = [item['cruces'] for item in top]
         
-        ax.barh(empresas, cruces, color='#1b263b')
+        # Use light blue bars, add value labels for a professional look
+        ax.barh(empresas, cruces, color='#2AB4EB', edgecolor='white')
+        for i, v in enumerate(cruces):
+            ax.text(v + max(cruces)*0.01, i, str(v), va='center', ha='left', fontsize=12, color='#333333', fontweight='bold')
         ax.set_xlabel('Cantidad de Cruces', fontsize=12)
         ax.set_title('Top 10 Empresas por Cantidad de Cruces', fontsize=14, fontweight='bold')
         ax.invert_yaxis()
-        ax.grid(axis='x', alpha=0.3)
+        ax.grid(axis='x', alpha=0.3, color='#eeeeee')
         
         return self._fig_to_base64(fig)
     

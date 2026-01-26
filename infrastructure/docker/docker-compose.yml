@@ -4,8 +4,10 @@ services:
       context: ../..
       dockerfile: infrastructure/docker/Dockerfile
     container_name: ia_report_generator
+    env_file:
+      - ../../.env
     volumes:
       - ../..:/app
     ports:
-      - "8000:8000"
-    command: ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+      - "8010:8000"
+    command: ["python", "main.py", "api", "--host", "0.0.0.0", "--port", "8000"]

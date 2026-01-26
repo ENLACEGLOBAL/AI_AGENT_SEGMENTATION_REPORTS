@@ -88,6 +88,7 @@ class CrucesAnalytics:
             .agg(
                 cantidad_clientes=('id_contraparte', 'size'),
                 suma_clientes=('valor_suma', 'sum'),
+                lista_clientes=('valor_suma', list),
                 Mayor_riesgo_clientes=('riesgo', 'max')
             )
         )
@@ -110,6 +111,7 @@ class CrucesAnalytics:
             .agg(
                 cantidad_proveedores=('id_contraparte', 'size'),
                 suma_proveedores=('valor_suma', 'sum'),
+                lista_proveedores=('valor_suma', list),
                 Mayor_riesgo_proveedores=('riesgo', 'max')
             )
         )
@@ -132,6 +134,7 @@ class CrucesAnalytics:
             .agg(
                 cantidad_empleados=('id_contraparte', 'size'),
                 suma_empleados=('valor_suma', 'sum'),
+                lista_empleados=('valor_suma', list),
                 Mayor_riesgo_empleados=('riesgo', 'max')
             )
         )
@@ -339,47 +342,95 @@ class CrucesAnalytics:
             r_empleado_str = str(row.get('Mayor_riesgo_empleados', '')).upper()
             r_empleado = 5 if r_empleado_str == 'ALTO' else 0
             
+            # Helper para formateo de riesgo y moneda
+            def get_risk_props(val, is_str_type=False):
+                if is_str_type:
+                    v = str(val).upper()
+                    if v == 'ALTO': return 'danger', 'Alto'
+                    if v == 'MEDIO': return 'warning', 'Medio'
+                    return 'success', 'Bajo'
+                
+                try:
+                    v = float(val)
+                except:
+                    v = 0
+                
+                if v >= 4: return 'danger', 'Alto'
+                if v >= 3: return 'warning', 'Medio'
+                return 'success', 'Bajo'
+
+            def fmt_money(val):
+                try:
+                    return "${:,.0f}".format(float(val))
+                except:
+                    return "$0"
+
             # Construir info de cliente
-            cliente_info = None
             cant_cli = row.get('cantidad_clientes', 0)
-            if pd.notna(cant_cli) and cant_cli > 0:
-                cliente_info = {
-                    "cantidad": int(cant_cli),
-                    "suma": float(row.get('suma_clientes', 0) or 0),
-                    "riesgo": int(r_cliente)
-                }
+            lista_cli = row.get('lista_clientes')
+            if not isinstance(lista_cli, list): lista_cli = []
+            
+            r_c_class, r_c_label = get_risk_props(r_cliente)
+            suma_cli = float(row.get('suma_clientes', 0) or 0)
+
+            cliente_info = {
+                "count": int(cant_cli) if pd.notna(cant_cli) else 0,
+                "amount": fmt_money(suma_cli),
+                "risk_class": r_c_class,
+                "risk_label": r_c_label,
+                "cantidad": int(cant_cli) if pd.notna(cant_cli) else 0,
+                "suma": suma_cli,
+                "riesgo": int(r_cliente) if pd.notna(r_cliente) else 0,
+                "transacciones": [float(x) for x in lista_cli if pd.notna(x)]
+            }
             
             # Construir info de proveedor
-            proveedor_info = None
             cant_prov = row.get('cantidad_proveedores', 0)
-            if pd.notna(cant_prov) and cant_prov > 0:
-                proveedor_info = {
-                    "cantidad": int(cant_prov),
-                    "suma": float(row.get('suma_proveedores', 0) or 0),
-                    "riesgo": int(r_proveedor)
-                }
+            r_p_class, r_p_label = get_risk_props(r_proveedor)
+            suma_prov = float(row.get('suma_proveedores', 0) or 0)
+
+            proveedor_info = {
+                "count": int(cant_prov) if pd.notna(cant_prov) else 0,
+                "amount": fmt_money(suma_prov),
+                "risk_class": r_p_class,
+                "risk_label": r_p_label,
+                "cantidad": int(cant_prov) if pd.notna(cant_prov) else 0,
+                "suma": suma_prov,
+                "riesgo": int(r_proveedor) if pd.notna(r_proveedor) else 0,
+                "transacciones": [float(x) for x in (row.get('lista_proveedores') if isinstance(row.get('lista_proveedores'), list) else []) if pd.notna(x)]
+            }
             
             # Construir info de empleado
-            empleado_info = None
             cant_emp = row.get('cantidad_empleados', 0)
-            if pd.notna(cant_emp) and cant_emp > 0:
-                empleado_info = {
-                    "cantidad": int(cant_emp),
-                    "suma": float(row.get('suma_empleados', 0) or 0),
-                    "riesgo": r_empleado_str
-                }
+            r_e_class, r_e_label = get_risk_props(r_empleado_str, is_str_type=True)
+            suma_emp = float(row.get('suma_empleados', 0) or 0)
+
+            empleado_info = {
+                "count": int(cant_emp) if pd.notna(cant_emp) else 0,
+                "amount": fmt_money(suma_emp),
+                "risk_class": r_e_class,
+                "risk_label": r_e_label,
+                "cantidad": int(cant_emp) if pd.notna(cant_emp) else 0,
+                "suma": suma_emp,
+                "riesgo": r_empleado_str,
+                "transacciones": [float(x) for x in (row.get('lista_empleados') if isinstance(row.get('lista_empleados'), list) else []) if pd.notna(x)]
+            }
             
             tiene_formulario = bool(row.get('tiene_formulario', False))
             fecha_formulario = row.get('fecha_formulario')
             
             tabla.append({
+                "id": str(row['id_contraparte']),
+                "empresa": str(row['id_contraparte']), # Fallback as name is not available
                 "id_contraparte": str(row['id_contraparte']),
                 "id_empresa": int(row.get('id_empresa', 0) or 0),
+                "cruces_count": int(row.get('conteo_categorias', 0) or 0),
                 "conteo_categorias": int(row.get('conteo_categorias', 0) or 0),
                 "cliente": cliente_info,
                 "proveedor": proveedor_info,
                 "empleado": empleado_info,
                 "riesgo_maximo": max(r_cliente, r_proveedor, r_empleado),
+                "dd": tiene_formulario,
                 "tiene_formulario": tiene_formulario,
                 "fecha_formulario": str(fecha_formulario) if fecha_formulario else None
             })

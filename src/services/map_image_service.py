@@ -2,7 +2,8 @@ import json
 import os
 import base64
 import urllib.request
-from typing import Dict, Any
+from typing import Dict, Any, Any
+import io
 import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon
 
@@ -35,10 +36,6 @@ def _fetch_geojson(url: str) -> Dict[str, Any]:
             return json.loads(r.read().decode())
     except Exception:
         return {}
-
-def _save_base64(path: str) -> str:
-    with open(path, "rb") as f:
-        return "data:image/png;base64," + base64.b64encode(f.read()).decode()
 
 class MapImageService:
     def world_fatf_map(self, fatf_status: Dict[str, str]) -> Dict[str, Any]:
@@ -92,11 +89,13 @@ class MapImageService:
                     for poly in coords:
                         draw_polygon(poly)
 
-        out_path = os.path.join(GENERATED_IMAGES_DIR, 'world_fatf_map.png')
+        buffer = io.BytesIO()
         plt.tight_layout()
-        plt.savefig(out_path, dpi=150, bbox_inches='tight')
+        plt.savefig(buffer, dpi=150, bbox_inches='tight')
         plt.close(fig)
-        return {"path": out_path, "base64": _save_base64(out_path)}
+        buffer.seek(0)
+        b64 = "data:image/png;base64," + base64.b64encode(buffer.read()).decode()
+        return {"path": "IN_MEMORY", "base64": b64}
 
     def colombia_risk_map(self, dept_counts: Dict[str, int], empresa_id: int) -> Dict[str, Any]:
         """
@@ -155,11 +154,13 @@ class MapImageService:
                 # Si no encuentra coordenada, ignora o loguea
                 pass
 
-        out_path = os.path.join(GENERATED_IMAGES_DIR, f'colombia_risk_{empresa_id}.png')
+        buffer = io.BytesIO()
         plt.tight_layout()
-        plt.savefig(out_path, dpi=150, bbox_inches='tight')
+        plt.savefig(buffer, dpi=150, bbox_inches='tight')
         plt.close(fig)
-        return {"path": out_path, "base64": _save_base64(out_path)}
+        buffer.seek(0)
+        b64 = "data:image/png;base64," + base64.b64encode(buffer.read()).decode()
+        return {"path": "IN_MEMORY", "base64": b64}
 
     # Mantener compatibilidad con llamadas anteriores si existen
     def colombia_empresa_map(self, points: Any, empresa_id: int) -> Dict[str, Any]:
@@ -196,10 +197,12 @@ class MapImageService:
             size = max(30, min(300, monto/1e6))
             ax.scatter(lon, lat, s=size, c='#e63946', edgecolors='#660000', linewidths=0.5, alpha=0.8)
 
-        out_path = os.path.join(GENERATED_IMAGES_DIR, f'colombia_empresa_{empresa_id}.png')
+        buffer = io.BytesIO()
         plt.tight_layout()
-        plt.savefig(out_path, dpi=150, bbox_inches='tight')
+        plt.savefig(buffer, dpi=150, bbox_inches='tight')
         plt.close(fig)
-        return {"path": out_path, "base64": _save_base64(out_path)}
+        buffer.seek(0)
+        b64 = "data:image/png;base64," + base64.b64encode(buffer.read()).decode()
+        return {"path": "IN_MEMORY", "base64": b64}
 
 map_image_service = MapImageService()

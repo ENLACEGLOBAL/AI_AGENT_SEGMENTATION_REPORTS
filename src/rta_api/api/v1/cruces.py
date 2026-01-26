@@ -22,16 +22,14 @@ def get_db():
     finally:
         db.close()
 
-def generate_pdf_background(json_path: str, empresa_id: int):
+def generate_pdf_background(analytics_data: dict, empresa_id: int):
     """Tarea en segundo plano para generar el PDF"""
     try:
         service = PDFRiskReportService()
-        # Generar PDF usando el JSON recién creado
-        # Nota: PDFRiskReportService espera el path del JSON
         result = service.generate_pdf_report(
-            analytics_json_path=json_path,
-            tipo_contraparte="cliente", # Default, se ajusta internamente
-            output_path=None # Auto-generado
+            analytics_data=analytics_data,
+            tipo_contraparte="cliente",
+            output_path=None
         )
         print(f"✅ PDF generado automáticamente: {result.get('file')}")
     except Exception as e:
@@ -50,22 +48,20 @@ def process_batch_analytics(
     2. Dispara generación de PDF en background
     3. Retorna estado inmediato
     """
-    # 1. Generar Analytics
     analytics_result = cruces_analytics_service.generate_cruces_analytics(db, empresa_id)
     
     if analytics_result.get("status") == "error":
         return analytics_result
         
-    json_path = analytics_result.get("json_path")
+    analytics_data = analytics_result.get("data")
     
-    if json_path:
-        # 2. Programar generación de PDF
-        background_tasks.add_task(generate_pdf_background, json_path, empresa_id)
+    if analytics_data:
+        background_tasks.add_task(generate_pdf_background, analytics_data, empresa_id)
         
     return {
         "status": "success",
         "message": "Analytics generado y reporte PDF en proceso",
-        "analytics_path": json_path,
+        "analytics_path": None,
         "empresa_id": empresa_id
     }
 

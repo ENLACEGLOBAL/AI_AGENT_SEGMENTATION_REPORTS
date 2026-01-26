@@ -2,16 +2,15 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies (optional but recommended for some python packages)
-# RUN apt-get update && apt-get install -y --no-install-recommends gcc && rm -rf /var/lib/apt/lists/*
-
-# Copy requirements first to leverage Docker cache
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# System deps for some wheels (optional)
+# RUN apt-get update && apt-get install -y --no-install-recommends build-essential && rm -rf /var/lib/apt/lists/*
 
 # Copy project files
 COPY . /app
 
-# Run the FastAPI app with Uvicorn
-CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Install via pyproject (PEP 517)
+RUN pip install --no-cache-dir .
+
+# Run FastAPI app
+CMD ["python", "main.py", "api", "--host", "0.0.0.0", "--port", "8000"]
 

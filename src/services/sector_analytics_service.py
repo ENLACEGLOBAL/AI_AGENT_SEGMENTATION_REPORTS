@@ -249,66 +249,52 @@ class SectorAnalyticsService:
                         return v
                 return None
             df_tabla = df_empresa.copy()
-            if 'riesgo' in df_tabla.columns:
-                df_tabla = df_tabla[df_tabla['riesgo'].astype(str).str.upper() == 'ALTO']
+            # Limit table to top 100 transactions by amount to avoid UI lag, but show ALL risks
+            if 'monto' in df_tabla.columns:
+                df_tabla = df_tabla.sort_values(by='monto', ascending=False).head(100)
+            else:
+                df_tabla = df_tabla.head(100)
+                
             tabla = []
             for _, r in df_tabla.iterrows():
+                riesgo_val = str(r.get('riesgo', 'BAJO')).upper()
+                r_class = 'danger' if riesgo_val == 'ALTO' else ('warning' if riesgo_val == 'MEDIO' else 'success')
+                r_label = riesgo_val.capitalize()
+                
                 tabla.append({
-                    'id_transaccion': pick(r, tabla_cols['id_transaccion']),
+                    'id': pick(r, tabla_cols['id_transaccion']),
                     'empresa': str(pick(r, tabla_cols['empresa']) or ''),
                     'nit': str(pick(r, tabla_cols['nit']) or ''),
                     'ciiu': str(pick(r, tabla_cols['ciiu']) or ''),
                     'actividad': str(pick(r, tabla_cols['actividad']) or ''),
                     'departamento': str(pick(r, tabla_cols['departamento']) or ''),
                     'monto': float(pick(r, tabla_cols['monto']) or 0),
-                    'tipo_contraparte': str(r.get('tipo_contraparte', ''))
+                    'tipo_contraparte': str(r.get('tipo_contraparte', '')),
+                    'riesgo_class': r_class,
+                    'riesgo_label': r_label
                 })
             
-            # Generate graph and save image
             graph_gen = GraphGenerator(df_empresa)
             chart_dataset = graph_gen.get_donut_dataset()
             chart_base64 = graph_gen.get_donut_base64()
-            
-            # Save chart image
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             image_filename = f"chart_{empresa_id}_{timestamp}.png"
-            image_path = os.path.join(GENERATED_IMAGES_DIR, image_filename)
-            
-            # Generate and save the chart
-            import matplotlib.pyplot as plt
-            plt.figure(figsize=(6, 6))
-            plt.pie(
-                chart_dataset['values'],
-                labels=chart_dataset['labels'],
-                autopct='%1.1f%%',
-                startangle=90
-            )
-            plt.title(f'Distribución por Actividad - Empresa {empresa_id}')
-            plt.tight_layout()
-            plt.savefig(image_path, dpi=150, bbox_inches='tight')
-            plt.close()
-            
-            # Upload image to S3
             s3_url = None
             try:
-                with open(image_path, "rb") as img_file:
-                    img_bytes = img_file.read()
-                
-                # Use a specific folder for analytics images in S3
-                s3_key = f"analytics_images/{image_filename}"
-                s3_url = s3_service.upload_file(img_bytes, s3_key, content_type="image/png")
-                
-                if s3_url:
-                    print(f"✅ Image uploaded to S3: {s3_url}")
-                    # Remove local image since it is safely in S3
-                    os.remove(image_path)
-                else:
-                    print("⚠️ S3 Upload failed, keeping local image.")
+                img_bytes = None
+                if isinstance(chart_base64, str) and chart_base64.startswith("data:image"):
+                    img_bytes = base64.b64decode(chart_base64.split(",", 1)[1])
+                if img_bytes:
+                    s3_key = f"analytics_images/{image_filename}"
+                    s3_url = s3_service.upload_file(img_bytes, s3_key, content_type="image/png")
+                    if s3_url:
+                        print(f"✅ Image uploaded to S3: {s3_url}")
+                    else:
+                        print("⚠️ S3 upload failed, image not stored.")
             except Exception as e:
                 print(f"⚠️ Error uploading image to S3: {e}")
 
-            # Encrypt image path (Use S3 URL if available, else local path)
-            final_image_path = s3_url if s3_url else image_path
+            final_image_path = s3_url if s3_url else "NO_IMAGE"
             encrypted_image_path = self.encrypt_path(final_image_path)
             
             # Generate map images (base64)
@@ -359,7 +345,7 @@ class SectorAnalyticsService:
                 "mapa_global": world_map.get("map_data", []), # Agregar data cruda para mapa global
                 "chart_data": chart_dataset,
                 "fatf_status": fatf_status,
-                "tabla": tabla,
+                "transacciones": tabla,
                 "encrypted_image_path": encrypted_image_path,
                 "image_filename": image_filename,
                 "images": {
@@ -398,7 +384,7 @@ class SectorAnalyticsService:
             if s3_url:
                  print(f"✅ Image saved to S3: {s3_url}")
             else:
-                 print(f"✅ Image saved locally: {image_path}")
+                 print(f"⚠️ Image not saved to S3 (Local save disabled)")
             print(f"✅ Encrypted path stored in database")
             
             return {

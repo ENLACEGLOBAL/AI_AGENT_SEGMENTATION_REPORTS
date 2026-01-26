@@ -234,6 +234,7 @@ class CrucesAnalyticsService:
                 "distribucion_categorias": distribucion_categorias,
                 "top_empresas": top_empresas,
                 "tabla_detalles": tabla_detalles,
+                "entidades_cruces": tabla_detalles, # Alias for PHP Controller compatibility
                 "estadisticas_formularios": estadisticas_formularios,
                 "charts": charts
             }
