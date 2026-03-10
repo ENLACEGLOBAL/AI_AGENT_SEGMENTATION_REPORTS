@@ -21,11 +21,21 @@ def run_api(host="0.0.0.0", port=8000):
         print(f"❌ Error iniciando el servidor: {e}")
 
 def generate_pdf(empresa_id, tipo_contraparte):
+    from datetime import datetime
+    import os
+    
+    # Directorio de salida local
+    output_dir = os.path.join("data_provisional", "reports")
+    os.makedirs(output_dir, exist_ok=True)
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_path = os.path.join(output_dir, f"Reporte_Riesgo_{empresa_id}_{timestamp}.pdf")
+
     print(f"📄 Generando PDF para empresa {empresa_id} ({tipo_contraparte})...")
     db = TargetSessionLocal()
     try:
-        # report_orchestrator.generate_pdf espera: (empresa_id: int, tipo_contraparte: str, db: Session)
-        result = report_orchestrator.generate_pdf(empresa_id, tipo_contraparte, db)
+        # report_orchestrator.generate_pdf espera: (empresa_id: int, tipo_contraparte: str, db: Session, fecha: str, monto_min: float, output_path: str)
+        result = report_orchestrator.generate_pdf(empresa_id, tipo_contraparte, db, output_path=output_path)
         
         # Verificar el resultado
         pdf_res = result.get("pdf", {})
@@ -33,9 +43,9 @@ def generate_pdf(empresa_id, tipo_contraparte):
         
         if pdf_res.get("status") == "success":
             print(f"✅ PDF generado exitosamente.")
-            print(f"📂 Archivo local: {pdf_res.get('file')}")
-            if pdf_res.get('url'):
-                 print(f"☁️ URL S3: {pdf_res.get('url')}")
+            print(f"📂 Archivo local: {pdf_res.get('local_file')}")
+            if pdf_res.get('file'):
+                 print(f"☁️ S3 Key: {pdf_res.get('file')}")
         else:
             print(f"❌ Error generando PDF.")
             if analytics_res.get("status") != "success":

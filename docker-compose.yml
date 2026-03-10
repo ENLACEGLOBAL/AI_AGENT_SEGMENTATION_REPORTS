@@ -1,0 +1,41 @@
+version: "3.9"
+
+networks:
+  traefik:
+    external: false
+
+services:
+  traefik:
+    image: traefik:v2.11
+    command:
+      - --api.dashboard=true
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --providers.docker=true
+      - --certificatesresolvers.le.acme.httpchallenge=true
+      - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
+      - --certificatesresolvers.le.acme.email=${LE_EMAIL}
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./data/letsencrypt:/letsencrypt
+    networks:
+      - traefik
+
+  reports-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.reports
+    env_file:
+      - ./reports.env
+    networks:
+      - traefik
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.reports.rule=Host(`${REPORTS_HOST}`)
+      - traefik.http.routers.reports.entrypoints=websecure
+      - traefik.http.routers.reports.tls.certresolver=le
+      - traefik.http.services.reports.loadbalancer.server.port=8000
