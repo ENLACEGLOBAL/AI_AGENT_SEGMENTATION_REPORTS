@@ -18,8 +18,15 @@ def get_db():
     finally:
         db.close()
 
+def get_source_db():
+    db = SourceSessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
 @router.get("/sector-ubicacion")
-def sector_ubicacion(empresa_id: int = Query(...), db: Session = Depends(get_db), claims: dict = Depends(require_jwt)):
+def sector_ubicacion(empresa_id: int = Query(...), db: Session = Depends(get_source_db), claims: dict = Depends(require_jwt)):
     result = sector_analytics_service.generate_analytics_json(None, empresa_id, db)
     try:
         payload = result.get("data", result)
@@ -48,14 +55,14 @@ def chart_image(empresa_id: int = Query(...), db: Session = Depends(get_db), cla
         src_db.close()
 
 @router.get("/latest")
-def latest(empresa_id: int = Query(...), db: Session = Depends(get_db), claims: dict = Depends(require_jwt)):
+def latest(empresa_id: int = Query(...), db: Session = Depends(get_source_db), claims: dict = Depends(require_jwt)):
     res = sector_analytics_service.generate_analytics_json(None, empresa_id, db)
     fatf = res.get('data', res).get('fatf_status', {})
     img = map_image_service.world_fatf_map(fatf)
     return {"status": "success", "empresa_id": empresa_id, "image_base64": img["base64"], "path": img["path"]}
 
 @router.get("/colombia-map")
-def colombia_map(empresa_id: int = Query(...), db: Session = Depends(get_db), claims: dict = Depends(require_jwt)):
+def colombia_map(empresa_id: int = Query(...), db: Session = Depends(get_source_db), claims: dict = Depends(require_jwt)):
     res = sector_analytics_service.generate_analytics_json(None, empresa_id, db)
     points = res.get('data', res).get('mapa_colombia', [])
     img = map_image_service.colombia_empresa_map(points, empresa_id)

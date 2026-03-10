@@ -40,7 +40,7 @@ class CrucesGraphGenerator:
         ax = axes[0]
         labels = ['Bajo', 'Medio', 'Alto']
         values = [dist.get('bajo', 0), dist.get('medio', 0), dist.get('alto', 0)]
-        colors = ['#2a9d8f', '#e9c46a', "#2AB4EB"] # Green, Sand, Blue (No Red)
+        colors = ['#009688', '#FF9800', '#1565C0']
         
         bars = ax.bar(labels, values, color=colors, width=0.6)
         
@@ -68,7 +68,7 @@ class CrucesGraphGenerator:
         }
         labels_pie = [labels_map.get(k, k) for k in tipos.keys()]
         values_pie = list(tipos.values())
-        colors_pie = ['#264653', '#2a9d8f', '#e9c46a', '#2AB4EB'] # Blue, Green, Sand, Light Blue
+        colors_pie = ['#FF9800', '#1565C0', '#009688', '#00BCD4']
         
         # Helper para mostrar cantidad exacta
         def make_autopct(values):
@@ -93,7 +93,7 @@ class CrucesGraphGenerator:
         ax = axes[2]
         labels_cat = [f'{k} Cat.' for k in sorted(cat.keys())]
         values_cat = [cat[k] for k in sorted(cat.keys())]
-        colors_cat = ['#e9c46a', '#264653'] # Sand, Dark Blue (Replaced Pink)
+        colors_cat = ['#FF9800', '#1565C0', '#009688', '#00BCD4'][:max(1, len(values_cat))]
         
         if sum(values_cat) > 0:
             wedges, texts, autotexts = ax.pie(values_cat, labels=labels_cat, autopct=make_autopct(values_cat), 
@@ -137,9 +137,9 @@ class CrucesGraphGenerator:
         # Yellow (Warning): #f0b323
         # Green (Success): #2a9d8f
         colors_risk = {
-            'bajo': '#2a9d8f',   # Green
-            'medio': '#e9c46a',  # Light Yellow (Sand)
-            'alto': '#264653'    # Blue (Replaces Orange)
+            'bajo': '#009688',
+            'medio': '#FF9800',
+            'alto': '#1565C0'
         }
         
         # Configurar Figura (Ancha y compacta) - Wider for 3020px PDF
@@ -258,7 +258,7 @@ class CrucesGraphGenerator:
             
             # Barra Valor (Colores corporativos modernos: Green, Yellow - User Request)
             # Cycle: Green, Yellow, Blue (No Red/Pink)
-            bar_colors = ['#2a9d8f', '#e9c46a', '#264653', '#457b9d']
+            bar_colors = ['#FF9800', '#1565C0', '#009688', '#00BCD4']
             c = bar_colors[i % len(bar_colors)]
             
             if val > 0:
@@ -289,7 +289,7 @@ class CrucesGraphGenerator:
         fig, ax = plt.subplots(figsize=(8, 6))
         labels = ['Bajo (1-2)', 'Medio (3)', 'Alto (4-5)']
         values = [dist['bajo'], dist['medio'], dist['alto']]
-        colors = ['#2a9d8f', '#e9c46a', '#264653'] # Green, Yellow, Blue
+        colors = ['#009688', '#FF9800', '#1565C0']
         
         ax.bar(labels, values, color=colors, edgecolor='white', linewidth=2)
         ax.set_ylabel('Cantidad de Entidades', fontsize=12)
@@ -318,7 +318,7 @@ class CrucesGraphGenerator:
             tipos.get('cliente_empleado', 0),
             tipos.get('triple_cruce', 0)
         ]
-        raw_colors = ['#457b9d', '#264653', '#f4a261', '#2a9d8f'] # No Red
+        raw_colors = ['#FF9800', '#1565C0', '#009688', '#00BCD4']
         
         # Filtrar valores cero para evitar superposición de etiquetas y sectores vacíos
         filtered_data = [(l, v, c) for l, v, c in zip(raw_labels, raw_values, raw_colors) if v > 0]
@@ -358,7 +358,7 @@ class CrucesGraphGenerator:
         labels = [f'{k} Categorías' for k in sorted(dist.keys())]
         values = [dist[k] for k in sorted(dist.keys())]
         # Corporate palette (no red): Sand, Teal, Dark Blue, Light Blue
-        colors = ['#e9c46a', '#2a9d8f', '#264653', '#2AB4EB'][:max(1, len(values))]
+        colors = ['#FF9800', '#1565C0', '#009688', '#00BCD4'][:max(1, len(values))]
         
         ax.pie(values, labels=labels, autopct='%1.1f%%', colors=colors,
                startangle=90, textprops={'fontsize': 12})
@@ -375,7 +375,7 @@ class CrucesGraphGenerator:
         cruces = [item['cruces'] for item in top]
         
         # Use light blue bars, add value labels for a professional look
-        ax.barh(empresas, cruces, color='#2AB4EB', edgecolor='white')
+        ax.barh(empresas, cruces, color='#00BCD4', edgecolor='white')
         for i, v in enumerate(cruces):
             ax.text(v + max(cruces)*0.01, i, str(v), va='center', ha='left', fontsize=12, color='#333333', fontweight='bold')
         ax.set_xlabel('Cantidad de Cruces', fontsize=12)

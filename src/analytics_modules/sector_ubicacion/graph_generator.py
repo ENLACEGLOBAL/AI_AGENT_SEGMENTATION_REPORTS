@@ -307,8 +307,8 @@ class GraphGenerator:
         # Tamaño panorámico para PDF 3020px
         fig, ax = plt.subplots(figsize=(22, 10))
         
-        # Paleta de colores más VIVOS (Material Design Style)
-        colors = ['#2196F3', '#FF9800', '#4CAF50', '#E91E63', '#9C27B0', '#00BCD4', '#FFEB3B', '#F44336', '#3F51B5', '#009688']
+        # Paleta de colores verdes y azules (Green & Blue tones)
+        colors = ['#1565C0', '#009688', '#00BCD4', '#4CAF50', '#2196F3', '#00897B', '#03A9F4', '#8BC34A', '#0288D1', '#00796B']
         
         # Plotting
         df_pivot.plot(kind='bar', stacked=True, ax=ax, color=colors[:len(df_pivot.columns)], width=0.6)
@@ -354,7 +354,7 @@ class GraphGenerator:
         ax.set_axisbelow(True)
         
         # Ajuste de Layout
-        plt.tight_layout()
+        # plt.tight_layout() # REMOVED: Causing UserWarning and conflict with subplots_adjust
         plt.subplots_adjust(bottom=0.4) # Increased bottom margin significantly
 
         buffer = io.BytesIO()

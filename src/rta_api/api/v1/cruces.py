@@ -38,6 +38,8 @@ def generate_pdf_background(analytics_data: dict, empresa_id: int):
 @router.post("/process-batch")
 def process_batch_analytics(
     empresa_id: int,
+    fecha: str | None = Query(None, description="Fecha específica YYYY-MM-DD"),
+    monto_min: float | None = Query(None, description="Monto mínimo de transacción"),
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     # claims: dict = Depends(require_jwt) # Opcional: si la otra app no tiene token, comentar esto o usar API Key
@@ -48,7 +50,7 @@ def process_batch_analytics(
     2. Dispara generación de PDF en background
     3. Retorna estado inmediato
     """
-    analytics_result = cruces_analytics_service.generate_cruces_analytics(db, empresa_id)
+    analytics_result = cruces_analytics_service.generate_cruces_analytics(db, empresa_id, fecha=fecha, monto_min=monto_min)
     
     if analytics_result.get("status") == "error":
         return analytics_result
@@ -62,12 +64,18 @@ def process_batch_analytics(
         "status": "success",
         "message": "Analytics generado y reporte PDF en proceso",
         "analytics_path": None,
-        "empresa_id": empresa_id
+        "empresa_id": empresa_id,
+        "filters": {
+            "fecha": fecha,
+            "monto_min": monto_min
+        }
     }
 
 @router.get("/analytics")
 def get_cruces_analytics(
     empresa_id: int | None = Query(None),
+    fecha: str | None = Query(None, description="Fecha específica YYYY-MM-DD"),
+    monto_min: float | None = Query(None, description="Monto mínimo de transacción"),
     db: Session = Depends(get_db),
     claims: dict = Depends(require_jwt)
 ):
@@ -76,16 +84,20 @@ def get_cruces_analytics(
     
     Args:
         empresa_id: Opcional - ID de empresa para filtrar
+        fecha: Opcional - fecha específica (YYYY-MM-DD)
+        monto_min: Opcional - monto mínimo
         
     Returns:
         JSON con KPIs, distribuciones, gráficos y tabla de detalles
     """
-    return cruces_analytics_service.generate_cruces_analytics(db, empresa_id)
+    return cruces_analytics_service.generate_cruces_analytics(db, empresa_id, fecha=fecha, monto_min=monto_min)
 
 
 @router.get("/dashboard", response_class=HTMLResponse)
 def get_cruces_dashboard(
     empresa_id: int | None = Query(None),
+    fecha: str | None = Query(None, description="Fecha específica YYYY-MM-DD"),
+    monto_min: float | None = Query(None, description="Monto mínimo de transacción"),
     db: Session = Depends(get_db),
     claims: dict = Depends(require_jwt)
 ):
@@ -94,7 +106,7 @@ def get_cruces_dashboard(
     Usa la plantilla del archivo ANÁLISIS DE ENTIDADES.html
     """
     # Generar analytics
-    result = cruces_analytics_service.generate_cruces_analytics(db, empresa_id)
+    result = cruces_analytics_service.generate_cruces_analytics(db, empresa_id, fecha=fecha, monto_min=monto_min)
     
     if result.get("status") != "success":
         return f"""
@@ -146,7 +158,7 @@ def get_cruces_dashboard(
         
         <div class="kpis">
             <div class="kpi-card">
-                <div class="kpi-value">{kpis.get('total_registros', 0)}</div>
+                <div class="kpi-value">{kpis.get('total_cruces', 0)}</div>
                 <div class="kpi-label">Total Registros</div>
             </div>
             <div class="kpi-card">
@@ -281,6 +293,8 @@ def get_cruces_dashboard(
 @router.get("/export-json")
 def export_cruces_json(
     empresa_id: int | None = Query(None),
+    fecha: str | None = Query(None, description="Fecha específica YYYY-MM-DD"),
+    monto_min: float | None = Query(None, description="Monto mínimo de transacción"),
     db: Session = Depends(get_db),
     claims: dict = Depends(require_jwt)
 ):
@@ -288,7 +302,7 @@ def export_cruces_json(
     Exporta los datos de cruces en formato JSON puro.
     Útil para consumo desde PHP u otros sistemas.
     """
-    result = cruces_analytics_service.generate_cruces_analytics(db, empresa_id)
+    result = cruces_analytics_service.generate_cruces_analytics(db, empresa_id, fecha=fecha, monto_min=monto_min)
     
     if result.get("status") == "success":
         return result.get("data", {})

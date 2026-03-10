@@ -4,6 +4,8 @@ import base64
 import urllib.request
 from typing import Dict, Any, Any
 import io
+import matplotlib
+matplotlib.use('Agg') # Ensure non-interactive backend
 import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon
 
@@ -56,23 +58,58 @@ class MapImageService:
             "GERMANY": "ALEMANIA",
             "SPAIN": "ESPAÑA",
             "KOREA, DEMOCRATIC PEOPLE'S REPUBLIC OF": "COREA DEL NORTE",
+            "NORTH KOREA": "COREA DEL NORTE",
             "IRAN (ISLAMIC REPUBLIC OF)": "IRAN",
+            "IRAN": "IRAN",
+            "RUSSIAN FEDERATION": "RUSIA",
+            "RUSSIA": "RUSIA",
+            "TURKEY": "TURQUIA",
+            "VENEZUELA (BOLIVARIAN REPUBLIC OF)": "VENEZUELA",
+            "VENEZUELA": "VENEZUELA",
+            "BOLIVIA (PLURINATIONAL STATE OF)": "BOLIVIA",
+            "VIET NAM": "VIETNAM",
+            "SYRIAN ARAB REPUBLIC": "SIRIA",
+            "SYRIA": "SIRIA",
+            "MYANMAR": "MYANMAR",
+            "CUBA": "CUBA",
+            "PANAMA": "PANAMA",
+            "NICARAGUA": "NICARAGUA",
+            "CHINA": "CHINA"
         }
         
         # Si falla la carga del GeoJSON, al menos devolvemos una imagen vacía o básica
         if not geo:
              plt.text(0, 0, "No se pudo cargar el mapa mundial.", ha='center')
         else:
+            found_any = False
             for feat in geo.get('features', []):
                 name = norm(feat.get('properties', {}).get('name', ''))
+                
+                # Try direct match
                 status = norm(fatf_status.get(name, ''))
+                
+                # Try alias match
                 if not status and name in alias:
                     status = norm(fatf_status.get(alias[name], ''))
-                color = '#cccccc'
-                if status == 'NO COOPERANTE':
-                    color = '#de2d26'
-                elif status == 'COOPERANTE':
-                    color = '#2ca25f'
+                
+                # Try reverse check: Check if any DB country is IN the GeoJSON name
+                if not status:
+                    for db_country, db_status in fatf_status.items():
+                         # Example: DB="IRAN", GeoJSON="IRAN (ISLAMIC...)"
+                         if db_country in name and len(db_country) > 3:
+                             status = norm(db_status)
+                             break
+                
+                if status:
+                    found_any = True
+
+                color = '#f0f0f0' # Lighter default
+                if 'NO COOPERANTE' in status or 'ALTO' in status:
+                    color = '#de2d26' # Red
+                elif 'COOPERANTE' in status:
+                    color = '#2ca25f' # Green
+                
+                # ... drawing code ...
 
                 geom = feat.get('geometry', {})
                 gtype = geom.get('type')
@@ -80,7 +117,7 @@ class MapImageService:
 
                 def draw_polygon(coord_list):
                     for ring in coord_list:
-                        poly = Polygon(ring, closed=True, facecolor=color, edgecolor='#555', linewidth=0.4)
+                        poly = Polygon(ring, closed=True, facecolor=color, edgecolor='#333333', linewidth=0.6)
                         ax.add_patch(poly)
 
                 if gtype == 'Polygon':
@@ -91,7 +128,7 @@ class MapImageService:
 
         buffer = io.BytesIO()
         plt.tight_layout()
-        plt.savefig(buffer, dpi=150, bbox_inches='tight')
+        plt.savefig(buffer, dpi=200, bbox_inches='tight')
         plt.close(fig)
         buffer.seek(0)
         b64 = "data:image/png;base64," + base64.b64encode(buffer.read()).decode()
@@ -116,14 +153,14 @@ class MapImageService:
         # Dibujar mapa base
         if geo:
             for feat in geo.get('features', []):
-                color = '#e9ecef' # Gris claro fondo
+                color = '#f8f9fa' # Gris muy claro fondo
                 geom = feat.get('geometry', {})
                 gtype = geom.get('type')
                 coords = geom.get('coordinates', [])
 
                 def draw_polygon(coord_list):
                     for ring in coord_list:
-                        poly = Polygon(ring, closed=True, facecolor=color, edgecolor='#adb5bd', linewidth=0.5)
+                        poly = Polygon(ring, closed=True, facecolor=color, edgecolor='#6c757d', linewidth=0.8)
                         ax.add_patch(poly)
 
                 if gtype == 'Polygon':
@@ -188,14 +225,29 @@ class MapImageService:
                     for poly in coords: draw_polygon(poly)
 
         for p in points:
-            r = (p.get('riesgo', '') or '').upper()
-            if r and r != 'ALTO':
+            r = (str(p.get('riesgo', '')) or '').upper()
+            
+            # Allow ALTO, HIGH, 5, 4, MEDIO, MEDIUM, 3
+            is_valid = False
+            if r in ['ALTO', 'HIGH', '5', '4', 'MEDIO', 'MEDIUM', '3']:
+                is_valid = True
+            
+            if not is_valid:
                 continue
+            
             lat = float(p.get('lat', 4.5709))
             lon = float(p.get('lon', -74.2973))
             monto = float(p.get('monto', 0))
             size = max(30, min(300, monto/1e6))
-            ax.scatter(lon, lat, s=size, c='#e63946', edgecolors='#660000', linewidths=0.5, alpha=0.8)
+            
+            # Color logic
+            color = '#e63946' # Red for High
+            edge = '#660000'
+            if r in ['MEDIO', 'MEDIUM', '3']:
+                color = '#FF9800' # Orange for Medium
+                edge = '#E65100'
+                
+            ax.scatter(lon, lat, s=size, c=color, edgecolors=edge, linewidths=0.5, alpha=0.8)
 
         buffer = io.BytesIO()
         plt.tight_layout()
