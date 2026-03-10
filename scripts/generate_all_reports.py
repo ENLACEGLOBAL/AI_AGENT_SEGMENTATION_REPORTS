@@ -49,12 +49,10 @@ def generate_all(empresa_id: int | None = None, fecha: str | None = None, monto_
                     "status": status,
                     "file": file_path
                 })
-
                 if status == "SUCCESS":
                     logger.info(f"✅ Generated PDF for {emp_id}: {file_path}")
                 else:
                     logger.error(f"❌ Failed to generate PDF for {emp_id}: {res}")
-
             except Exception as e:
                 logger.error(f"❌ Exception for {emp_id}: {e}")
                 results.append({
@@ -69,7 +67,6 @@ def generate_all(empresa_id: int | None = None, fecha: str | None = None, monto_
         logger.info("\n=== GENERATION SUMMARY ===")
         for r in results:
             logger.info(f"ID {r['id']}: {r['status']} - {r.get('file') or r.get('error')}")
-
     except Exception as e:
         logger.error(f"Fatal error: {e}")
     finally:
