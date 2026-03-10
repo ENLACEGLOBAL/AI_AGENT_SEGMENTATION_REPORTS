@@ -15,9 +15,10 @@ from sqlalchemy import distinct
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+
 def generate_all(empresa_id: int | None = None, fecha: str | None = None, monto_min: float | None = None):
     db_source = SourceSessionLocal()
-    
+
     try:
         # Get company IDs
         if empresa_id is not None:
@@ -28,32 +29,32 @@ def generate_all(empresa_id: int | None = None, fecha: str | None = None, monto_
             empresa_ids = db_source.query(distinct(Cliente.id_empresa)).all()
             empresa_ids = [eid[0] for eid in empresa_ids if eid[0] is not None]
             logger.info(f"Found {len(empresa_ids)} companies: {empresa_ids}")
-        
+
         results = []
-        
+
         for emp_id in empresa_ids:
             logger.info(f"--- Processing Company ID: {emp_id} ---")
-            
-            # Create a fresh target session for each report generation (similar to main.py)
-            db_target = TargetSessionLocal()
+
+            # Create a fresh SOURCE session for each report generation
+            db_session = SourceSessionLocal()
             try:
                 # Assuming 'cliente' is the default type we want
-                res = report_orchestrator.generate_pdf(emp_id, "cliente", db_target, fecha=fecha, monto_min=monto_min)
-                
+                res = report_orchestrator.generate_pdf(emp_id, "cliente", db_session, fecha=fecha, monto_min=monto_min)
+
                 status = "SUCCESS" if res.get("pdf", {}).get("status") == "success" else "FAILED"
                 file_path = res.get("pdf", {}).get("file", "N/A")
-                
+
                 results.append({
                     "id": emp_id,
                     "status": status,
                     "file": file_path
                 })
-                
+
                 if status == "SUCCESS":
                     logger.info(f"✅ Generated PDF for {emp_id}: {file_path}")
                 else:
                     logger.error(f"❌ Failed to generate PDF for {emp_id}: {res}")
-                    
+
             except Exception as e:
                 logger.error(f"❌ Exception for {emp_id}: {e}")
                 results.append({
@@ -62,13 +63,13 @@ def generate_all(empresa_id: int | None = None, fecha: str | None = None, monto_
                     "error": str(e)
                 })
             finally:
-                db_target.close()
-                
+                db_session.close()
+
         # Summary
         logger.info("\n=== GENERATION SUMMARY ===")
         for r in results:
             logger.info(f"ID {r['id']}: {r['status']} - {r.get('file') or r.get('error')}")
-            
+
     except Exception as e:
         logger.error(f"Fatal error: {e}")
     finally:
@@ -78,25 +79,27 @@ def generate_all(empresa_id: int | None = None, fecha: str | None = None, monto_
         except Exception:
             pass
 
+
 def generate_id1(fecha: str | None = None, monto_min: float | None = None):
     """Genera específicamente el reporte para la empresa ID 1."""
-    db_target = TargetSessionLocal()
+    db_session = SourceSessionLocal()
     try:
         logger.info("--- Processing Company ID: 1 ---")
-        res = report_orchestrator.generate_pdf(1, "cliente", db_target, fecha=fecha, monto_min=monto_min)
-        
+        res = report_orchestrator.generate_pdf(1, "cliente", db_session, fecha=fecha, monto_min=monto_min)
+
         status = "SUCCESS" if res.get("pdf", {}).get("status") == "success" else "FAILED"
         file_path = res.get("pdf", {}).get("file", "N/A")
-        
+
         if status == "SUCCESS":
             logger.info(f"✅ Generated PDF for 1: {file_path}")
         else:
             logger.error(f"❌ Failed to generate PDF for 1: {res}")
-            
+
     except Exception as e:
         logger.error(f"❌ Exception for 1: {e}")
     finally:
-        db_target.close()
+        db_session.close()
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generación de informes de riesgo")

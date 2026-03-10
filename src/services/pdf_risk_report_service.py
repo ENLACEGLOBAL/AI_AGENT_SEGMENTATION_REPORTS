@@ -426,7 +426,7 @@ class PDFRiskReportService:
                 cipher = Fernet(fernet_key)
 
             encrypted_path = cipher.encrypt(file_path.encode()).decode()
-            db = TargetSessionLocal()
+            db = SourceSessionLocal()
             try:
                 repo = GeneratedReportRepository()
                 repo.create_report(db, file_path=encrypted_path, company_id=empresa_id, pdf_content=pdf_bytes)

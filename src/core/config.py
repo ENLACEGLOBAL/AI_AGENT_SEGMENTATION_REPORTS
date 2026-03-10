@@ -1,16 +1,36 @@
-# src/core/config.py
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import os
 from urllib.parse import quote_plus
+from typing import Optional
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 class Settings(BaseSettings):
-    # --- DB ---
+    # --- DB (Valores por defecto) ---
     DB_ENGINE: str = "mysql"
     DB_HOST: str = "localhost"
     DB_PORT: int = 3306
     DB_USER: str = "root"
     DB_PASSWORD: str = ""
     DB_NAME: str = "default"
+
+    # --- SRC DB (Agregamos estas para que Pydantic no las ignore) ---
+    SRC_DB_ENGINE: Optional[str] = None
+    SRC_DB_HOST: Optional[str] = None
+    SRC_DB_PORT: Optional[int] = None
+    SRC_DB_USER: Optional[str] = None
+    SRC_DB_PASSWORD: Optional[str] = None
+    SRC_DB_NAME: Optional[str] = None
+
+    # --- TGT DB (Agregamos estas también) ---
+    TGT_DB_ENGINE: Optional[str] = None
+    TGT_DB_HOST: Optional[str] = None
+    TGT_DB_PORT: Optional[int] = None
+    TGT_DB_USER: Optional[str] = None
+    TGT_DB_PASSWORD: Optional[str] = None
+    TGT_DB_NAME: Optional[str] = None
 
     # --- JWT ---
     JWT_SECRET: str
@@ -20,7 +40,7 @@ class Settings(BaseSettings):
     TEMP_FOLDER: str
 
     # --- STORAGE CONFIG ---
-    FILESYSTEM_CLOUD: str = "aws" # 'aws' or 'minio'
+    FILESYSTEM_CLOUD: str = "aws"
 
     # --- AWS S3 (SRC) ---
     AWS_SRC_ACCESS_KEY_ID: str = ""
@@ -51,7 +71,6 @@ class Settings(BaseSettings):
                 "endpoint_url": self.MINIO_ENDPOINT
             }
         else:
-            # Default to AWS
             return {
                 "type": "aws",
                 "access_key": self.AWS_SRC_ACCESS_KEY_ID,
@@ -63,24 +82,26 @@ class Settings(BaseSettings):
 
     @property
     def SOURCE_DATABASE_URL(self) -> str:
-        engine = os.getenv("SRC_DB_ENGINE", self.DB_ENGINE)
-        host = os.getenv("SRC_DB_HOST", self.DB_HOST)
-        port = int(os.getenv("SRC_DB_PORT", self.DB_PORT))
-        user = quote_plus(os.getenv("SRC_DB_USER", self.DB_USER))
-        password = quote_plus(os.getenv("SRC_DB_PASSWORD", self.DB_PASSWORD))
-        name = os.getenv("SRC_DB_NAME", self.DB_NAME)
-        # Use mysql-connector-python for better authentication support (auth_gssapi_client fix)
+        # Usamos directamente "self" porque Pydantic ya cargó los datos
+        engine = self.SRC_DB_ENGINE or self.DB_ENGINE
+        host = self.SRC_DB_HOST or self.DB_HOST
+        port = self.SRC_DB_PORT or self.DB_PORT
+        user = quote_plus(self.SRC_DB_USER or self.DB_USER)
+        password = quote_plus(self.SRC_DB_PASSWORD or self.DB_PASSWORD)
+        name = self.SRC_DB_NAME or self.DB_NAME
+
         return f"{engine}+mysqlconnector://{user}:{password}@{host}:{port}/{name}"
 
     @property
     def TARGET_DATABASE_URL(self) -> str:
-        engine = os.getenv("TGT_DB_ENGINE", self.DB_ENGINE)
-        host = os.getenv("TGT_DB_HOST", self.DB_HOST)
-        port = int(os.getenv("TGT_DB_PORT", self.DB_PORT))
-        user = quote_plus(os.getenv("TGT_DB_USER", self.DB_USER))
-        password = quote_plus(os.getenv("TGT_DB_PASSWORD", self.DB_PASSWORD))
-        name = os.getenv("TGT_DB_NAME", self.DB_NAME)
-        # Use mysql-connector-python for better authentication support
+        engine = self.TGT_DB_ENGINE or self.DB_ENGINE
+        host = self.TGT_DB_HOST or self.DB_HOST
+        port = self.TGT_DB_PORT or self.DB_PORT
+        user = quote_plus(self.TGT_DB_USER or self.DB_USER)
+        password = quote_plus(self.TGT_DB_PASSWORD or self.DB_PASSWORD)
+        name = self.TGT_DB_NAME or self.DB_NAME
+
         return f"{engine}+mysqlconnector://{user}:{password}@{host}:{port}/{name}"
+
 
 settings = Settings()
