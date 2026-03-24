@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import os
+from urllib.parse import quote_plus
 
 # 👇 1. Agregamos esto para que lea el .env cuando corres localmente
 from dotenv import load_dotenv
@@ -42,9 +43,12 @@ class Settings(BaseSettings):
         password = os.getenv("SRC_DB_PASSWORD", self.DB_PASSWORD_FORM)
         name = os.getenv("SRC_DB_NAME", self.DB_NAME_FORM)
 
-        # Codificamos el password por si acaso tiene caracteres especiales (como el *)
-        from urllib.parse import quote_plus
-        password = quote_plus(password) if password else ""
+        # 🟢 CORRECCIÓN: Limpiar comillas literales inyectadas por Docker antes de codificar
+        if password:
+            password = password.strip('"').strip("'")
+            password = quote_plus(password)
+        else:
+            password = ""
 
         return f"{engine}+pymysql://{user}:{password}@{host}:{port}/{name}"
 
@@ -58,11 +62,11 @@ class Settings(BaseSettings):
         password = os.getenv("TGT_DB_PASSWORD", self.DB_PASSWORD_FORM)
         name = os.getenv("TGT_DB_NAME", self.DB_NAME_FORM)
 
-        # Codificamos el password por si acaso
-        from urllib.parse import quote_plus
-        password = quote_plus(password) if password else ""
+        # 🟢 CORRECCIÓN: Limpiar comillas literales inyectadas por Docker antes de codificar
+        if password:
+            password = password.strip('"').strip("'")
+            password = quote_plus(password)
+        else:
+            password = ""
 
         return f"{engine}+pymysql://{user}:{password}@{host}:{port}/{name}"
-
-
-settings = Settings()
