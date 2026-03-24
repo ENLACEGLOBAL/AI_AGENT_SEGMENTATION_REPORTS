@@ -79,12 +79,14 @@ class Settings(BaseSettings):
 
     @property
     def STORAGE_CONFIG(self) -> dict:
-        # Mapeo exacto para que el servicio S3 lea las variables correctas
+        # Mapeo exacto basado en src/services/s3_service.py
         return {
-            "aws_access_key_id": os.getenv("AWS_SRC_ACCESS_KEY_ID", self.AWS_SRC_ACCESS_KEY_ID),
-            "aws_secret_access_key": os.getenv("AWS_SRC_SECRET_ACCESS_KEY", self.AWS_SRC_SECRET_ACCESS_KEY),
-            "region_name": os.getenv("AWS_SRC_REGION", self.AWS_SRC_REGION),
-            "bucket_name": os.getenv("AWS_SRC_BUCKET", self.AWS_SRC_BUCKET)
+            "type": "aws",  # Tu servicio usa esto para el log
+            "endpoint_url": os.getenv("AWS_ENDPOINT_URL", ""),  # Vacío por defecto para AWS S3 normal
+            "access_key": os.getenv("AWS_SRC_ACCESS_KEY_ID", self.AWS_SRC_ACCESS_KEY_ID),
+            "secret_key": os.getenv("AWS_SRC_SECRET_ACCESS_KEY", self.AWS_SRC_SECRET_ACCESS_KEY),
+            "region": os.getenv("AWS_SRC_REGION", self.AWS_SRC_REGION),
+            "bucket": os.getenv("AWS_SRC_BUCKET", self.AWS_SRC_BUCKET)
         }
 
 
