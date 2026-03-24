@@ -26,7 +26,7 @@ class ReportOrchestrator:
             db: Session,
             filtros_pdf: Optional[Dict] = None,
             oficial_conclusion: Optional[str] = None,
-            refresh_data: bool = False,  # Flag para Momento 1 y 4
+            refresh_data: bool = False,
             tipo_contraparte: str = "Universo General",
             company_name: Optional[str] = None,
             output_path: Optional[str] = None
@@ -34,7 +34,8 @@ class ReportOrchestrator:
 
         src = SourceSessionLocal()
         analytics_data = None
-        # Si hay filtros_pdf con valores, estamos en el Momento 2
+
+        # Validamos si Laravel envió filtros reales para saber si guardar o no el reporte oficial
         hay_filtros = bool(filtros_pdf and any(filtros_pdf.values()))
 
         try:
@@ -62,12 +63,22 @@ class ReportOrchestrator:
             # --- MOMENTO 1 y 4: Generación desde cero ---
             if not analytics_data:
                 print(f"⚙️ PDF: Procesando DB fresca para empresa {empresa_id}")
-                # Usamos los filtros básicos si vienen para la consulta SQL
-                f_desde = filtros_pdf.get("fecha_desde") if filtros_pdf else None
-                m_min = filtros_pdf.get("monto_min") if filtros_pdf else None
 
-                cruces_result = cruces_analytics_service.generate_cruces_analytics(src, empresa_id, fecha=f_desde,
-                                                                                   monto_min=m_min)
+                # 🟢 LIMPIEZA DE FILTROS: Evitar el ValueError ('') en Pandas
+                f_desde = None
+                m_min = None
+                if filtros_pdf:
+                    val_f = filtros_pdf.get("fecha_desde")
+                    if val_f and str(val_f).strip() != "":
+                        f_desde = str(val_f).strip()
+
+                    val_m = filtros_pdf.get("monto_min")
+                    if val_m and str(val_m).strip() != "":
+                        m_min = float(val_m)  # Lo convertimos a float seguro
+
+                cruces_result = cruces_analytics_service.generate_cruces_analytics(
+                    src, empresa_id, fecha=f_desde, monto_min=m_min
+                )
                 if cruces_result.get("status") != "success":
                     return cruces_result
                 analytics_data = cruces_result.get("data", {})
@@ -82,11 +93,23 @@ class ReportOrchestrator:
         finally:
             src.close()
 
+        # 🟢 NORMALIZACIÓN PARA EL SCRIPT DE PDF (Mantener compatibilidad)
+        filtros_normalizados = {
+            "fecha_desde": str(filtros_pdf.get("fecha_desde") or "") if filtros_pdf else "",
+            "fecha_hasta": str(filtros_pdf.get("fecha_hasta") or "") if filtros_pdf else "",
+            "monto_min": str(filtros_pdf.get("monto_min") or "") if filtros_pdf else "",
+            "monto_min_tx": float(filtros_pdf.get("monto_min_tx") or 0.0) if filtros_pdf else 0.0,
+            "sin_dd": "true" if (
+                        filtros_pdf and str(filtros_pdf.get("sin_dd", "")).lower() in ["true", "1"]) else "false",
+            "con_cruces": "true" if (
+                        filtros_pdf and str(filtros_pdf.get("con_cruces", "")).lower() in ["true", "1"]) else "false"
+        }
+
         # --- GENERACIÓN DEL PDF ---
         pdf = pdf_risk_report_service.generate_pdf_report(
             analytics_data=analytics_data,
             tipo_contraparte=tipo_contraparte,
-            filtros_pdf=filtros_pdf,
+            filtros_pdf=filtros_normalizados,
             oficial_conclusion=oficial_conclusion,
             output_path=output_path
         )
@@ -114,8 +137,11 @@ class ReportOrchestrator:
         src = SourceSessionLocal()
         analytics_data = None
 
+        # 🟢 LIMPIEZA DE FILTROS (Por si llegan desde la URL del Dashboard)
+        if fecha == "": fecha = None
+        if monto_min == "": monto_min = None
+
         try:
-            # --- MOMENTO 2: Intentar cargar JSON de caché para el Dashboard ---
             if not refresh_data and not fecha and not monto_min:
                 query = text("""
                     SELECT data_json, json_path 
@@ -136,7 +162,6 @@ class ReportOrchestrator:
                     if analytics_data:
                         print(f"⚡ Dashboard: Reutilizando caché para empresa {empresa_id}")
 
-            # --- MOMENTO 1 / 4: Generación desde cero ---
             if not analytics_data:
                 print(f"⚙️ Dashboard: Generando analítica completa desde DB para {empresa_id}")
                 cruces_result = cruces_analytics_service.generate_cruces_analytics(
@@ -152,7 +177,6 @@ class ReportOrchestrator:
         finally:
             src.close()
 
-        # Reporte narrativo de IA
         report = local_ai_report_service.generate_report(analytics_data)
 
         return {
@@ -164,7 +188,6 @@ class ReportOrchestrator:
 
     def generate_html(self, empresa_id: int, db: Session, fecha: str | None = None, monto_min: float | None = None) -> \
     Dict[str, Any]:
-        # Mantenemos este igual por compatibilidad, aunque se usa menos que el JSON
         src = SourceSessionLocal()
         try:
             cruces_result = cruces_analytics_service.generate_cruces_analytics(src, empresa_id, fecha=fecha,
