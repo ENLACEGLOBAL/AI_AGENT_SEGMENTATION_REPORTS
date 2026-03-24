@@ -96,18 +96,21 @@ class CrucesAnalyticsService:
                 print(f"   ⚠️ Error creando conexión a BD de formularios: {e2}")
                 return pd.DataFrame(columns=['id_empresa', 'numero_id', 'fecha_registro', 'nombre_completo'])
         try:
-            # QUITAR AUTO-DETECCIÓN Y FIJAR LA TABLA 'formularios'
+            # 🟢 FIX: Usar la nueva vista para traer solo Debidas Diligencias vigentes (<= 365 días)
             base_sql = """
-                        SELECT 
-                            id_empresa, 
-                            numero_id, 
-                            fecha_registro, 
-                            nombre_completo 
-                        FROM formularios
-                    """
+                                SELECT 
+                                    id_empresa, 
+                                    numero_id, 
+                                    fecha_registro, 
+                                    nombre_completo 
+                                FROM vista_info_forms_completo_new2
+                                WHERE anulado = 0 
+                                  AND dias_transcurridos <= 365
+                            """
             params = {}
             if empresa_id:
-                base_sql += " WHERE id_empresa = :eid"
+                # Como ya hay un WHERE arriba, aquí concatenamos con AND
+                base_sql += " AND id_empresa = :eid"
                 params["eid"] = empresa_id
 
             df = pd.read_sql(text(base_sql), local_forms.bind, params=params)
@@ -168,12 +171,14 @@ class CrucesAnalyticsService:
             # Para la empresa 15, que es masiva, esto reduce drásticamente el consumo de memoria y red.
             # Columnas clave para el análisis de cruces:
             cols_base = [
-                'id_empresa', 'id_contraparte', 'identificacion', 'numero_id', 'numero_documento', 'nit',
+                'id_empresa', 'id_contraparte', 'identificacion', 'numero_id', 'num_id', 'no_documento_de_identidad', 'numero_documento', 'nit',
                 'nombre', 'razon_social', 'nombre_completo', 'nombre_proveedor', 'nombre_cliente', 'nombre_empleado',
                 'valor', 'valor_transaccion', 'monto', 'total', 'salario', 'sueldo',
                 'fecha', 'fecha_transaccion', 'fecha_registro',
                 'riesgo', 'nivel_riesgo', 'conteo_alto',
-                'medio_pago', 'forma_pago', 'actividad', 'descripcion', 'concepto'
+                'medio_pago', 'forma_pago', 'actividad', 'descripcion', 'concepto',
+                'documento', 'no_documento_de_identidad', 'id_empleado', 'cedula', 'empleado',
+                'ciiu_descripcion', 'concepto_pago', 'cat_concep_pago', 'cargo'
             ]
 
             def build_query(table, empresa_id):
@@ -181,23 +186,36 @@ class CrucesAnalyticsService:
                     # Detectamos columnas disponibles
                     probe = local_db.execute(text(f"SELECT * FROM {table} LIMIT 0"))
                     available_cols = list(probe.keys())
+                    probe.close()  # 🟢 CRÍTICO: Liberar el cursor inmediatamente para evitar bloqueos en MySQL
 
-                    # Filtramos solo las que nos interesan para optimizar
+                    # Convertimos cols_base a un set para búsquedas ultra rápidas y exactas
+                    cols_base_lower = set([c.lower() for c in cols_base])
+
                     final_cols = []
                     for col in available_cols:
-                        # Incluir si está en la lista base, empieza con risk_, o contiene id/fecha/nombre/valor
-                        if col in cols_base or col.startswith(
-                                'risk_') or 'id' in col or 'fecha' in col or 'nombre' in col or 'valor' in col:
-                            final_cols.append(col)
+                        col_lower = col.lower()
 
+                        # 🟢 Match EXACTO o prefijos conocidos. Nada de comodines abiertos.
+                        if (col_lower in cols_base_lower or
+                                col_lower.startswith('risk_') or
+                                col_lower.startswith('categoria_') or
+                                col_lower.startswith('criterio_') or
+                                col_lower.startswith('pais_') or
+                                'ciiu' in col_lower):
+                            final_cols.append(f"`{col}`")  # 🟢 Backticks protegen palabras reservadas de MySQL
+
+                    # Si por alguna razón no encuentra nada, volvemos al default
                     if not final_cols:
-                        return f"SELECT * FROM {table}"
+                        q = f"SELECT * FROM {table}"
+                        if empresa_id: q += f" WHERE id_empresa = {empresa_id}"
+                        return q
 
                     cols_str = ", ".join(final_cols)
                     query = f"SELECT {cols_str} FROM {table}"
                     if empresa_id:
-                        query += f" WHERE id_empresa = {empresa_id}"  # Direct injection for simplicity in this context, safe if empresa_id is int
+                        query += f" WHERE id_empresa = {empresa_id}"
                     return query
+
                 except Exception as e:
                     print(f"⚠️ Error optimizando query para {table}: {e}")
                     q = f"SELECT * FROM {table}"
@@ -354,15 +372,16 @@ class CrucesAnalyticsService:
             tipos_cruces = analytics.get_tipos_cruces()
             distribucion_categorias = analytics.get_distribucion_categorias()
             top_empresas = analytics.get_top_empresas()
-            tabla_detalles = analytics.get_tabla_detalles(empresa_id)
+            use_universo = (os.getenv("ANALYTICS_UNIVERSO", "false").lower() in ("true", "1", "yes"))
+            tabla_detalles = analytics.get_tabla_detalles(empresa_id, usar_universo=use_universo)
             estadisticas_formularios = analytics.get_estadisticas_formularios()
             missing_dd_report = analytics.get_missing_dd_report()
             total_transacciones = int((0 if df_clientes is None else len(df_clientes)) + (
                 0 if df_proveedores is None else len(df_proveedores)) + (
                                           0 if df_empleados is None else len(df_empleados)))
-            id_opts_cli = ["num_id", "identificacion", "nit", "numero_documento", "id_contraparte", "id"]
-            id_opts_pro = ["no_documento_de_identidad", "identificacion", "nit", "numero_documento", "id_contraparte","id"]
-            id_opts_emp = ["id_empleado", "identificacion", "documento", "numero_documento", "id_contraparte", "id"]
+            id_opts_cli = ["num_id", "identificacion", "nit", "numero_documento", "id_contraparte"]
+            id_opts_pro = ["no_documento_de_identidad", "identificacion", "nit", "numero_documento", "id_contraparte"]
+            id_opts_emp = ["id_empleado", "identificacion", "documento", "numero_documento", "id_contraparte"]
             date_cols = ['fecha_transaccion', 'fecha', 'created_at', 'fecha_registro', 'fecha_movimiento', 'date',
                          'timestamp', 'fecha_doc', 'fec_mov', 'fecha_corte', 'fecha_operacion', 'fec_doc', 'fecha_mvto']
             amount_cols = ['valor_transaccion', 'valor', 'monto', 'salario', 'valor_suma']
@@ -398,7 +417,7 @@ class CrucesAnalyticsService:
 
             missing_tx = []
             total_missing_tx = 0
-            limit_missing = 10000
+            limit_missing = 1000000
 
             def collect(df, tipo, id_opts):
                 nonlocal total_missing_tx, missing_tx
@@ -406,27 +425,22 @@ class CrucesAnalyticsService:
                 id_col = pick_col(df, id_opts)
                 dcol = pick_date(df)
                 acol = pick_amount(df)
-                # Name and location columns candidates
-                name_opts = ['nombre', 'razon_social', 'nombre_cliente', 'nombre_proveedor', 'nombre_empleado',
+
+                # Opciones de columnas a extraer
+                name_opts = ['nombre', 'razon_social', 'nombre_cliente', 'nombre_proveedor','empleado', 'nombre_empleado',
                              'empresa', 'nombre_completo']
                 loc_opts = ['municipio', 'ciudad', 'departamento', 'ubicacion', 'localizacion']
+                act_opts = ['actividad', 'ciiu_descripcion', 'concepto_pago', 'cargo', 'detalle_transaccion',
+                            'descripcion']
+                medio_opts = ['medio_pago', 'forma_pago', 'metodo_pago']
 
-                def pick_name(r):
-                    for c in name_opts:
+                def pick_val(r, opts):
+                    for c in opts:
                         if c in df.columns:
                             v = r.get(c)
-                            if v and str(v).strip():
+                            if pd.notna(v) and str(v).strip() and str(v).lower() != 'nan':
                                 return str(v).strip()
                     return None
-
-                def pick_loc(r):
-                    vals = []
-                    for c in loc_opts:
-                        if c in df.columns:
-                            v = r.get(c)
-                            if v and str(v).strip():
-                                vals.append(str(v).strip())
-                    return ", ".join(vals) if vals else None
 
                 for _, r in df.iterrows():
                     eid = int(r.get("id_empresa", 0) or 0)
@@ -443,8 +457,10 @@ class CrucesAnalyticsService:
                                 "id": sid,
                                 "fecha": r.get(dcol) if dcol else None,
                                 "monto": r.get(acol) if acol else None,
-                                "nombre": pick_name(r),
-                                "ubicacion": pick_loc(r)
+                                "nombre": pick_val(r, name_opts),
+                                "ubicacion": pick_val(r, loc_opts),
+                                "actividad": pick_val(r, act_opts),  # 🟢 EXTRAEMOS LA ACTIVIDAD
+                                "medio": pick_val(r, medio_opts)  # 🟢 EXTRAEMOS EL MEDIO DE PAGO
                             })
 
             collect(df_clientes, "cliente", id_opts_cli)
@@ -470,10 +486,19 @@ class CrucesAnalyticsService:
                         "empleado_sum": 0.0
                     }
                     ent = entidades_sin_dd_map[key]
+
                 # Append transaction and accumulate amounts
                 amt = pd.to_numeric(row.get("monto"), errors='coerce')
                 val = float(amt) if not pd.isna(amt) else 0.0
-                tx_item = {"fecha": row.get("fecha"), "monto": val}
+
+                # 🟢 AHORA SÍ GUARDAMOS TODOS LOS DATOS EN EL ITEM
+                tx_item = {
+                    "fecha": row.get("fecha"),
+                    "monto": val,
+                    "actividad": row.get("actividad"),
+                    "medio_pago": row.get("medio")
+                }
+
                 if row["tipo"] == "cliente":
                     ent["cliente_txs"].append(tx_item)
                     ent["cliente_sum"] += val
@@ -493,7 +518,7 @@ class CrucesAnalyticsService:
                     "id_empresa": ent["id_empresa"],
                     "cruces_count": 0,
                     "conteo_categorias": int((len(ent["cliente_txs"]) > 0) + (len(ent["proveedor_txs"]) > 0) + (
-                                len(ent["empleado_txs"]) > 0)),
+                            len(ent["empleado_txs"]) > 0)),
                     "cliente": {"count": len(ent["cliente_txs"]), "amount": ent["cliente_sum"],
                                 "risk_class": "secondary", "risk_label": "N/A", "transacciones": ent["cliente_txs"]},
                     "proveedor": {"count": len(ent["proveedor_txs"]), "amount": ent["proveedor_sum"],
@@ -576,8 +601,8 @@ class CrucesAnalyticsService:
             # Compaction: generar JSON más liviano para empresas con gran volumen
             try:
                 compact_enabled = (os.getenv("COMPACT_JSON", "true").lower() in ("true", "1", "yes"))
-                limit = int(os.getenv("JSON_LIMIT", "2000"))
-                txn_limit = int(os.getenv("JSON_TXN_LIMIT", "100"))
+                limit = int(os.getenv("JSON_LIMIT", "100000"))
+                txn_limit = int(os.getenv("JSON_TXN_LIMIT", "5000"))
                 if compact_enabled:
                     def slice_with_meta(arr, key_name):
                         if not isinstance(arr, list):

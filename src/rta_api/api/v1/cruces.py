@@ -9,7 +9,7 @@ from typing import Optional
 
 from src.db.base import TargetSessionLocal
 from src.services.cruces_analytics_service import cruces_analytics_service
-from src.services.pdf_risk_report_service import PDFRiskReportService
+from src.services.pdf_risk_report_service_v2 import pdf_risk_report_service
 from src.core.security import require_jwt
 
 router = APIRouter(prefix="/api/v1/cruces", tags=["cruces"])
@@ -25,8 +25,7 @@ def get_db():
 def generate_pdf_background(analytics_data: dict, empresa_id: int):
     """Tarea en segundo plano para generar el PDF"""
     try:
-        service = PDFRiskReportService()
-        result = service.generate_pdf_report(
+        result = pdf_risk_report_service.generate_pdf_report(
             analytics_data=analytics_data,
             tipo_contraparte="cliente",
             output_path=None
@@ -38,9 +37,9 @@ def generate_pdf_background(analytics_data: dict, empresa_id: int):
 @router.post("/process-batch")
 def process_batch_analytics(
     empresa_id: int,
+    background_tasks: BackgroundTasks,
     fecha: str | None = Query(None, description="Fecha específica YYYY-MM-DD"),
     monto_min: float | None = Query(None, description="Monto mínimo de transacción"),
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     # claims: dict = Depends(require_jwt) # Opcional: si la otra app no tiene token, comentar esto o usar API Key
 ):

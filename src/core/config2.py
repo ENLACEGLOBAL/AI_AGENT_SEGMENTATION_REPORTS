@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     # --- TEMP ---
     TEMP_FOLDER: str
 
+    # 🟢 --- CORREO MAILGUN ---
+    MAILGUN_SMTP_SERVER: str = "smtp.mailgun.org"
+    MAILGUN_SMTP_PORT: int = 587
+    MAILGUN_SMTP_LOGIN: str = ""
+    MAILGUN_SMTP_PASSWORD: str = ""
+    MAIL_FROM: str = "Auditoría Riesgos 365 <reportes@tudominio.com>"
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @property

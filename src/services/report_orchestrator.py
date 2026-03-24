@@ -1,7 +1,7 @@
 from typing import Dict, Any
 from sqlalchemy.orm import Session
 from src.services.cruces_analytics_service import cruces_analytics_service
-from src.services.pdf_risk_report_service import pdf_risk_report_service
+from src.services.pdf_risk_report_service_v2 import pdf_risk_report_service
 from src.services.local_ai_report_service import generate_html_report
 from src.services.local_ai_report_service import local_ai_report_service
 from src.db.repositories.generated_report_repo import GeneratedReportRepository
@@ -13,7 +13,16 @@ class ReportOrchestrator:
         self.repo = GeneratedReportRepository()
         self.html_repo = HtmlReportRepository()
     
-    def generate_pdf(self, empresa_id: int, tipo_contraparte: str, db: Session, fecha: str | None = None, monto_min: float | None = None, output_path: str | None = None) -> Dict[str, Any]:
+    def generate_pdf(
+        self,
+        empresa_id: int,
+        tipo_contraparte: str,
+        db: Session,
+        fecha: str | None = None,
+        monto_min: float | None = None,
+        output_path: str | None = None,
+        company_name: str | None = None,
+    ) -> Dict[str, Any]:
         src = SourceSessionLocal()
         try:
             # Generate Cruces Entidades Analytics (This is now the primary data source)
@@ -23,6 +32,8 @@ class ReportOrchestrator:
                 return cruces_result
             
             analytics_data = cruces_result.get("data", {})
+            if isinstance(analytics_data, dict) and company_name:
+                analytics_data["empresa_nombre"] = company_name
         finally:
             src.close()
         

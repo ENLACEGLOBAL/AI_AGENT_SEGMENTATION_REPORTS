@@ -1,0 +1,4 @@
+{
+  "status": "error",
+  "message": "'CrucesAnalytics' object has no attribute '_get_first_risk_multi'"
+}

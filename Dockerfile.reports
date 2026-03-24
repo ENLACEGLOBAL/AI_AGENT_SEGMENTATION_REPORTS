@@ -5,10 +5,12 @@ WORKDIR /app
 # Instalar dependencias del sistema para ReportLab y otras librerías
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    libfreetype6 \
+    libpng16-16 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements-reports.txt /app/
-RUN pip install --no-cache-dir -r requirements-reports.txt
+COPY requirements.txt /app/
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . /app
 
@@ -18,4 +20,4 @@ ENV PYTHONUNBUFFERED=1 \
     APP_PORT=8000
 
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "src.rta_api.main:app", "--host", "0.0.0.0", "--port", "8000"]

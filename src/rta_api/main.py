@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from src.rta_api.api.v1 import reports, sector_ubicacion, cruces
+from src.rta_api.api.v1 import auth, cruces, reports, sector_ubicacion
 
 app = FastAPI(
     title="Risk Reports API",
@@ -17,6 +17,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
 app.include_router(reports.router)
 app.include_router(sector_ubicacion.router)
 app.include_router(cruces.router)

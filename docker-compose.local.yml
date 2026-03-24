@@ -1,0 +1,11 @@
+version: "3.9"
+
+services:
+  reports-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.reports
+    env_file:
+      - ./.env
+    ports:
+      - "8081:8000"

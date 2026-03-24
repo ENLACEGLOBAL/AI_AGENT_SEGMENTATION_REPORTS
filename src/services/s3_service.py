@@ -6,15 +6,16 @@ from src.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+
 class S3Service:
     def __init__(self):
         config = settings.STORAGE_CONFIG
-        
+
         self.bucket_name = config["bucket"]
         self.region = config["region"]
         self.endpoint_url = config["endpoint_url"]
         self.s3_client = None
-        
+
         if config["access_key"] and config["secret_key"]:
             try:
                 client_kwargs = {
@@ -23,25 +24,25 @@ class S3Service:
                     'aws_secret_access_key': config["secret_key"],
                     'region_name': self.region
                 }
-                
+
                 # Add endpoint_url if provided (MinIO)
                 if self.endpoint_url:
                     # Clean endpoint URL
                     self.endpoint_url = self.endpoint_url.rstrip('/')
                     client_kwargs['endpoint_url'] = self.endpoint_url
-                    
+
                     # MinIO requires signature v4 and often path style addressing
                     client_kwargs['config'] = Config(
                         signature_version='s3v4',
                         s3={'addressing_style': 'path'}
                     )
                     # Uncomment below if self-signed certs cause issues
-                    client_kwargs['verify'] = False 
-                
+                    client_kwargs['verify'] = False
+
                 self.s3_client = boto3.client(**client_kwargs)
-                
+
                 logger.info(f"S3 Service initialized using {config['type'].upper()}")
-                
+
             except Exception as e:
                 logger.error(f"Failed to initialize S3 client: {e}")
         else:
@@ -68,7 +69,7 @@ class S3Service:
                 ContentType=content_type
                 # ACL='public-read' # Optional: depends on bucket policy
             )
-            
+
             # Construct URL
             if self.endpoint_url:
                 # MinIO Style: endpoint/bucket/key
@@ -78,14 +79,28 @@ class S3Service:
             else:
                 # AWS Virtual-hosted-style
                 url = f"https://{self.bucket_name}.s3.{self.region}.amazonaws.com/{object_name}"
-            
+
             return url
-            
+
         except ClientError as e:
             logger.error(f"S3 Upload Error: {e}")
             return None
         except Exception as e:
             logger.error(f"Unexpected error uploading to S3: {e}")
             return None
+
+    def download_file_bytes(self, object_name: str) -> bytes:
+        """
+        Descarga un archivo desde S3 directamente a la memoria RAM (bytes).
+        Ideal para archivos comprimidos .gz
+        """
+        try:
+            # Reemplaza 'self.s3_client' y 'self.bucket_name' por los nombres reales de tus variables en esa clase
+            response = self.s3_client.get_object(Bucket=self.bucket_name, Key=object_name)
+            return response['Body'].read()
+        except Exception as e:
+            print(f"Error descargando el archivo {object_name} desde S3: {e}")
+            raise e
+
 
 s3_service = S3Service()
