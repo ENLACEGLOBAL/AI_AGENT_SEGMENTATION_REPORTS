@@ -70,3 +70,6 @@ class Settings(BaseSettings):
             password = ""
 
         return f"{engine}+pymysql://{user}:{password}@{host}:{port}/{name}"
+
+
+settings = Settings()
