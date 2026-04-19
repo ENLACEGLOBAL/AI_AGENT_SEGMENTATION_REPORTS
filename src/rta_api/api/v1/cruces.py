@@ -23,6 +23,7 @@ def get_db():
 def process_batch_analytics(
         empresa_id: int,
         background_tasks: BackgroundTasks,
+        validez_dd: int = Query(1), # 👈 NUEVO
         db: Session = Depends(get_db),
         # claims: dict = Depends(require_jwt)
 ):
@@ -30,11 +31,11 @@ def process_batch_analytics(
     MOMENTO 1 / 4: Generación forzada (Batch)
     Llama al orquestador con refresh_data=True para asegurar que se procese la DB.
     """
-    # Usamos generate_json con refresh_data=True para forzar el recálculo
     result = report_orchestrator.generate_json(
         empresa_id=empresa_id,
         db=db,
-        refresh_data=True
+        refresh_data=True,
+        validez_dd=validez_dd # 👈 NUEVO
     )
 
     if result.get("status") == "error":
@@ -52,7 +53,8 @@ def get_cruces_analytics(
         empresa_id: int = Query(...),
         fecha: str | None = Query(None),
         monto_min: float | None = Query(None),
-        refresh: bool = Query(False),  # 🟢 Importante para el Momento 4 desde el Dashboard
+        validez_dd: int = Query(1), # 👈 NUEVO (Clave para que la tabla en pantalla muestre lo correcto)
+        refresh: bool = Query(False),
         db: Session = Depends(get_db),
         claims: dict = Depends(require_jwt)
 ):
@@ -65,36 +67,45 @@ def get_cruces_analytics(
         db=db,
         fecha=fecha,
         monto_min=monto_min,
-        refresh_data=refresh
+        refresh_data=refresh,
+        validez_dd=validez_dd # 👈 NUEVO
     )
 
 
 @router.get("/dashboard", response_class=HTMLResponse)
 def get_cruces_dashboard(
         empresa_id: int = Query(...),
+        validez_dd: int = Query(1), # 👈 NUEVO
         db: Session = Depends(get_db),
         claims: dict = Depends(require_jwt)
 ):
     """
     Retorna la data para el dashboard usando el orquestador (Momento 2).
     """
-    result = report_orchestrator.generate_json(empresa_id=empresa_id, db=db)
+    result = report_orchestrator.generate_json(
+        empresa_id=empresa_id,
+        db=db,
+        validez_dd=validez_dd # 👈 NUEVO
+    )
 
     if result.get("status") != "success":
         return HTMLResponse(content=f"<h1>Error</h1><p>{result.get('message')}</p>", status_code=500)
 
-    # Aquí iría tu lógica de renderizado HTML si decides mantenerla en Python,
-    # aunque lo ideal es que Laravel consuma el /analytics y pinte la tabla.
     return HTMLResponse(content="<html><body>Dashboard listo en JSON</body></html>")
 
 
 @router.get("/export-json")
 def export_cruces_json(
         empresa_id: int = Query(...),
+        validez_dd: int = Query(1), # 👈 NUEVO
         db: Session = Depends(get_db),
         claims: dict = Depends(require_jwt)
 ):
     """
     Exportación rápida consumiendo el Orquestador (Momento 2).
     """
-    return report_orchestrator.generate_json(empresa_id=empresa_id, db=db)
+    return report_orchestrator.generate_json(
+        empresa_id=empresa_id,
+        db=db,
+        validez_dd=validez_dd # 👈 NUEVO
+    )

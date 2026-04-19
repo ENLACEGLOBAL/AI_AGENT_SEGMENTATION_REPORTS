@@ -115,19 +115,16 @@ def _draw_cover(canvas_obj, doc, empresa_nombre, empresa_id,
     canvas_obj.setFont("Helvetica", 9)
     canvas_obj.drawCentredString(W / 2, H - 168, "Expertos en Auditoría y Cumplimiento")
 
-    # Título principal
+    # 🟢 MODIFICACIÓN 1: Título y subtítulos actualizados
     canvas_obj.setFillColor(colors.HexColor(C["dark_text"]))
     canvas_obj.setFont("Helvetica-Bold", 40)
     canvas_obj.drawCentredString(W / 2, H * 0.57, "Informe Ejecutivo")
-    canvas_obj.drawCentredString(W / 2, H * 0.57 - 48, "de Riesgos")
 
-    # Subtítulo
+    # Subtítulo (Más pegado al título principal)
     canvas_obj.setFillColor(colors.HexColor(C["slate"]))
     canvas_obj.setFont("Helvetica", 15)
-    canvas_obj.drawCentredString(W / 2, H * 0.57 - 86,
-                                 "Análisis Estratégico de Relaciones Cruzadas")
-    canvas_obj.drawCentredString(W / 2, H * 0.57 - 105,
-                                 "y Conflictos de Interés")
+    canvas_obj.drawCentredString(W / 2, H * 0.57 - 40, "Identificación de Multi-vínculos")
+    canvas_obj.drawCentredString(W / 2, H * 0.57 - 60, "y contrapartes sin debida diligencia")
 
     # Badge pill con fecha
     pw, ph = 320, 34
@@ -139,9 +136,16 @@ def _draw_cover(canvas_obj, doc, empresa_nombre, empresa_id,
     canvas_obj.roundRect(px, py, pw, ph, 17, fill=1, stroke=1)
     canvas_obj.setFillColor(colors.HexColor(C["dark_text"]))
     canvas_obj.setFont("Helvetica-Bold", 11)
+
+    # 🟢 MODIFICACIÓN 2: Meses en español de forma manual
+    meses_es = ["enero", "febrero", "marzo", "abril", "mayo", "junio",
+                "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+    hoy = datetime.now()
+    fecha_espanol = f"{hoy.day} de {meses_es[hoy.month - 1]} de {hoy.year}"
+
     canvas_obj.drawCentredString(
         W / 2, py + 11,
-        f"Plataforma Riesgos 365  |  {datetime.now().strftime('%d de %B de %Y')}"
+        f"Plataforma Riesgos 365  |  {fecha_espanol}"
     )
 
     # Barra de datos inferior (Fondo blanco, borde superior cyan)
@@ -166,7 +170,9 @@ def _draw_cover(canvas_obj, doc, empresa_nombre, empresa_id,
 
     footer_label("EMPRESA", empresa_nombre, 20)
     footer_label("PERÍODO", periodo, 280)
-    footer_label("ALCANCE DE LA AUDITORÍA", "Vinculaciones y Cruces", W - 20, "right")
+
+    # 🟢 MODIFICACIÓN 3: Cambio de Alcance
+    footer_label("ALCANCE", "Monitoreo Contrapartes", W - 20, "right")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -313,8 +319,10 @@ def _chart_relaciones(counts: dict):
         ax_bar.spines[sp].set_visible(False)
     ax_bar.grid(axis="x", alpha=0.22, color="#CBD5E1")
     ax_bar.set_xlim(0, max_v * 1.25)
-    ax_bar.set_title("Distribución Estratégica de Relaciones Cruzadas",
-                     fontsize=11, fontweight="bold", color=C["dark_text"], pad=10)
+
+    # 🟢 MODIFICACIÓN 4: Se comenta el título interno redundante
+    # ax_bar.set_title("Distribución Estratégica de Relaciones Cruzadas",
+    #                  fontsize=11, fontweight="bold", color=C["dark_text"], pad=10)
 
     # Card de análisis
     ax_card.set_facecolor("white")
@@ -359,28 +367,33 @@ def _chart_piramide(total_contra, sin_dd_contra, alto_riesgo_sin_form):
     ax.set_xlim(0, 10)
     ax.set_ylim(0, 6.5)
     ax.axis("off")
-    ax.set_title("Estado de Debida Diligencia y Riesgo Estratégico",
-                 fontsize=13, fontweight="bold", color=C["dark_text"], pad=12)
 
+    # 🟢 MODIFICACIÓN 5: Se comenta el título interno redundante
+    # ax.set_title("Estado de Debida Diligencia y Riesgo Estratégico",
+    #              fontsize=13, fontweight="bold", color=C["dark_text"], pad=12)
+
+    # 🟢 MODIFICACIÓN 5b: Agregamos parámetros de offset X (line_x, text_x) para empujar el texto verde a la derecha
     layers = [
+        # (tw, yb, h, col, label, sub1, sub2, line_x, text_x)
+
         # 🟢 TOP (ROJO): Personas sin DD y de Riesgo Alto
         (0.9, 4.2, 1.0, C["pink"], "Prioridad Crítica (Alto)",
          "Contrapartes de Alto Riesgo SIN Debida Diligencia",
-         f"{alto_riesgo_sin_form} contrapartes urgentes"),
+         f"{alto_riesgo_sin_form} contrapartes urgentes", 6.2, 6.38),
 
         # 🟢 MEDIO (AMARILLO): Personas sin DD
         (2.4, 2.6, 1.4, C["orange"], "Brecha de Cumplimiento (Medio)",
          "Contrapartes SIN Debida Diligencia",
-         f"{sin_dd_contra:,} contrapartes".replace(",", ".")),
+         f"{sin_dd_contra:,} contrapartes".replace(",", "."), 6.2, 6.38),
 
-        # 🟢 BASE (VERDE): Total de personas evaluadas
+        # 🟢 BASE (VERDE): Total de personas evaluadas - MOVIDO A LA DERECHA
         (4.2, 0.5, 1.9, C["teal"], "Alcance de la Muestra (Base)",
          "Total Contrapartes Analizadas",
-         f"{total_contra:,} contrapartes en la muestra".replace(",", ".")),
+         f"{total_contra:,} contrapartes en la muestra".replace(",", "."), 6.8, 6.98),
     ]
 
     cx = 3.8
-    for (tw, yb, h, col, label, sub1, sub2) in layers:
+    for (tw, yb, h, col, label, sub1, sub2, line_x, text_x) in layers:
         bw = tw + h * 0.85
         # Cara frontal
         verts_f = [(cx - bw / 2, yb), (cx + bw / 2, yb),
@@ -397,16 +410,16 @@ def _chart_piramide(total_contra, sin_dd_contra, alto_riesgo_sin_form):
         top_col = f"#{int(r2 * 255):02x}{int(g2 * 255):02x}{int(b2 * 255):02x}"
         ax.add_patch(MplPolygon(verts_t, closed=True, color=top_col, alpha=0.90, zorder=4))
 
-        # Línea conectora y texto
+        # Línea conectora y texto usando las nuevas coordenadas X
         mid_y = yb + h / 2
-        ax.annotate("", xy=(6.2, mid_y), xytext=(cx + bw / 2 + 0.1, mid_y),
+        ax.annotate("", xy=(line_x, mid_y), xytext=(cx + bw / 2 + 0.1, mid_y),
                     arrowprops=dict(arrowstyle="-", color=col, lw=1.2))
-        ax.scatter([6.2], [mid_y], s=45, color=col, zorder=5)
-        ax.text(6.38, mid_y + 0.22, label, fontsize=9, fontweight="bold",
+        ax.scatter([line_x], [mid_y], s=45, color=col, zorder=5)
+        ax.text(text_x, mid_y + 0.22, label, fontsize=9, fontweight="bold",
                 color=col, va="bottom", ha="left")
-        ax.text(6.38, mid_y - 0.04, sub1, fontsize=7.5, color=C["slate"],
+        ax.text(text_x, mid_y - 0.04, sub1, fontsize=7.5, color=C["slate"],
                 va="top", ha="left")
-        ax.text(6.38, mid_y - 0.30, sub2, fontsize=7.5, color=C["gray"],
+        ax.text(text_x, mid_y - 0.30, sub2, fontsize=7.5, color=C["gray"],
                 va="top", ha="left")
 
     return _fig_to_img(fig, 7.2, 3.9)
@@ -425,13 +438,14 @@ def _chart_plan_accion():
     ax.set_title("Plan de Acción y Conclusión Ejecutiva",
                  fontsize=12, fontweight="bold", color=C["dark_text"], pad=10)
 
+    # 🟢 MODIFICACIÓN 6: Textos actualizados del plan de acción
     steps = [
         (1.5, C["pink"], "1", "Intervención\nInmediata",
-         "Actualizar DD urgente\nen casos identificados"),
-        (5.0, C["orange"], "2", "Declaración\nFormal",
-         "Declaración de conflictos\nen doble/triple vínculo"),
-        (8.5, C["teal"], "3", "Vigilancia\nActiva",
-         "Monitoreo reforzado\nen concentración económica"),
+         "Actualizar DD en\ncasos identificados"),
+        (5.0, C["orange"], "2", "Justificación\nde Vínculos",
+         "Actualizar D.D con\njustificación de Vínculo"),
+        (8.5, C["teal"], "3", "Monitoreo\nActivo",
+         "Filtración por\nmontos de D.D"),
     ]
     ax.plot([1.5, 8.5], [2.05, 2.05], color="#CBD5E1", lw=2.5,
             solid_capstyle="round", zorder=1)
@@ -449,9 +463,6 @@ def _chart_plan_accion():
     return _fig_to_img(fig, 7.0, 2.4)
 
 
-# ══════════════════════════════════════════════════════════════
-# TABLA DETALLE  (estilo dark UX — slide 5)
-# ══════════════════════════════════════════════════════════════
 # ══════════════════════════════════════════════════════════════
 # TABLA DETALLE  (estilo dark UX — slide 5)
 # ══════════════════════════════════════════════════════════════
@@ -491,7 +502,6 @@ def _build_detail_table(sin_dd_list, table_cell_style):
     no_dd_style = ParagraphStyle("NoDD", fontName="Helvetica-Bold", fontSize=8,
                                  textColor=colors.HexColor(C["pink"]),
                                  alignment=TA_CENTER)
-    # 🟢 ESTILO NUEVO PARA LOS QUE SÍ TIENEN DD
     yes_dd_style = ParagraphStyle("YesDD", fontName="Helvetica-Bold", fontSize=8,
                                   textColor=colors.HexColor(C["teal"]),
                                   alignment=TA_CENTER)
@@ -541,7 +551,6 @@ def _build_detail_table(sin_dd_list, table_cell_style):
             p_count = int(r.get("proveedor", {}).get("count", 0) or r.get("proveedor", {}).get("cantidad", 0) or 0)
             e_count = int(r.get("empleado", {}).get("count", 0) or r.get("empleado", {}).get("cantidad", 0) or 0)
 
-            # 🟢 FIX: Quitamos 'Cli:', 'Pro:', 'Emp:'. Solo imprimimos el monto y txs
             if c_amt > 0 or c_count > 0:
                 tipos_list.append("Cliente")
                 montos_list.append(f"{fmta(c_amt)} <font size=6.5 color='#64748B'>({c_count} txs)</font>")
@@ -567,7 +576,6 @@ def _build_detail_table(sin_dd_list, table_cell_style):
 
         estado_dd_p = Paragraph("SÍ", yes_dd_style) if tiene_dd else Paragraph("NO", no_dd_style)
 
-        # 🟢 FIX: Reordenar las columnas para que coincidan con el Header (ID va primero)
         rows.append([
             Paragraph(fmt(id_val), table_cell_style),
             Paragraph(nombre_final, table_cell_style),
@@ -576,9 +584,7 @@ def _build_detail_table(sin_dd_list, table_cell_style):
             estado_dd_p,
         ])
 
-        # 🟢 FIX: Reajustar los anchos porque ahora la columna 1 (ID) es más pequeña que la 2 (Nombre)
     t = Table(rows, colWidths=[65, 165, 75, 115, 55])
-
 
     t.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(C["header_bg"])),
@@ -684,7 +690,7 @@ class PDFRiskReportService:
             output_path: Optional[str] = None,
             filtros_pdf: Optional[Dict[str, Any]] = None,
             email_to: Optional[str] = None,
-            oficial_conclusion: Optional[str] = None  # 🟢 NUEVO PARAMETRO
+            oficial_conclusion: Optional[str] = None
     ) -> Dict[str, Any]:
 
         try:
@@ -741,7 +747,6 @@ class PDFRiskReportService:
                 agrupados.sort(key=get_total_monto, reverse=True)
                 analytics["transacciones_sin_dd"] = agrupados
 
-                # 🟢 FIX: Contar correctamente el Alto Riesgo si viene como texto ("Alto") o número (>=4)
                 alto_riesgo_count = 0
                 for x in agrupados:
                     r_max = str(x.get("riesgo_maximo", 0)).lower()
@@ -761,7 +766,7 @@ class PDFRiskReportService:
             buffer = io.BytesIO()
             self._build_pdf(buffer, empresa_id=int(empresa_id),
                             data=analytics, tipo_contraparte=tipo_contraparte,
-                            oficial_conclusion=oficial_conclusion)  # 🟢 PASAMOS EL PARAMETRO
+                            oficial_conclusion=oficial_conclusion)
             pdf_bytes = buffer.getvalue()
             buffer.close()
 
@@ -968,7 +973,7 @@ class PDFRiskReportService:
 
     def _build_pdf(self, output: io.BytesIO, empresa_id: int,
                    data: Dict[str, Any], tipo_contraparte: str,
-                   oficial_conclusion: Optional[str] = None) -> None:  # 🟢 AQUI RECIBIMOS LA CONCLUSIÓN
+                   oficial_conclusion: Optional[str] = None) -> None:
 
         logo_path = self._find_logo()
         styles = getSampleStyleSheet()
@@ -1031,7 +1036,7 @@ class PDFRiskReportService:
             output, pagesize=A4,
             leftMargin=40, rightMargin=40,
             topMargin=50, bottomMargin=38,
-            title=pdf_title,  # 🟢 FIX: Inyectamos el título en los metadatos
+            title=pdf_title,
             author="Riesgos 365"
         )
         W_content = A4[0] - 80
@@ -1060,7 +1065,8 @@ class PDFRiskReportService:
 
         # S2: Distribución relaciones
         story.append(CondPageBreak(240))
-        story += section_header("2", "Distribución Estratégica de Relaciones Cruzadas")
+        # 🟢 MODIFICACIÓN 4: Título principal de la sección modificado
+        story += section_header("2", "Distribución Estratégica de Relaciones Cruzadas - Distribución Multi-vínculos")
         story.append(_chart_relaciones(counts))
         story.append(Spacer(1, 16))
 
@@ -1092,7 +1098,7 @@ class PDFRiskReportService:
         story.append(_chart_plan_accion())
         story.append(Spacer(1, 14))
 
-        # 🟢 CONCLUSIÓN OPCIÓN F: Enfoque Sagrilaft/Junta Directiva
+        # 🟢 CONCLUSIÓN
         concl_text = (
             f"El análisis de vinculaciones revela concentraciones de riesgo en el {pct_cruces:.2f}% de la muestra. "
             "Para dar estricto cumplimiento al marco normativo, es prioritario gestionar la actualización de los "
@@ -1109,7 +1115,7 @@ class PDFRiskReportService:
         ]))
         story.append(concl_box)
 
-        # 🟢 NUEVO: Observaciones del Oficial de Cumplimiento
+        # 🟢 Observaciones del Oficial de Cumplimiento
         if oficial_conclusion:
             story.append(Spacer(1, 16))
             oficial_title = Paragraph(

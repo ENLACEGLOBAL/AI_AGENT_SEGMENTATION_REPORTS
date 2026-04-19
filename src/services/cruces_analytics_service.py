@@ -55,7 +55,8 @@ class CrucesAnalyticsService:
             self,
             db: Session,
             empresa_id: Optional[int] = None,
-            forms_url: Optional[str] = None
+            forms_url: Optional[str] = None,
+            validez_dd: int = 1
     ) -> pd.DataFrame:
         """
         Carga formularios desde la BD de formularios (base2) con auto-detección de tabla/columnas.
@@ -96,20 +97,22 @@ class CrucesAnalyticsService:
                 print(f"   ⚠️ Error creando conexión a BD de formularios: {e2}")
                 return pd.DataFrame(columns=['id_empresa', 'numero_id', 'fecha_registro', 'nombre_completo'])
         try:
-            # 🟢 FIX: Usar la nueva vista para traer solo Debidas Diligencias vigentes (<= 365 días)
-            base_sql = """
-                                SELECT 
-                                    id_empresa, 
-                                    numero_id, 
-                                    fecha_registro, 
-                                    nombre_completo 
-                                FROM vista_info_forms_completo_new2
-                                WHERE anulado = 0 
-                                  AND dias_transcurridos <= 365
-                            """
+            # 🟢 FIX: Calculamos los días dinámicamente según la selección (1 o 2 años)
+            dias_maximos = 730 if validez_dd == 2 else 365
+            print(f"   📋 Buscando Formularios DD con vigencia de hasta {dias_maximos} días...")
+
+            base_sql = f"""
+                                        SELECT 
+                                            id_empresa, 
+                                            numero_id, 
+                                            fecha_registro, 
+                                            nombre_completo 
+                                        FROM vista_info_forms_completo_new2
+                                        WHERE anulado = 0 
+                                          AND dias_transcurridos <= {dias_maximos}
+                                    """
             params = {}
             if empresa_id:
-                # Como ya hay un WHERE arriba, aquí concatenamos con AND
                 base_sql += " AND id_empresa = :eid"
                 params["eid"] = empresa_id
 
@@ -314,7 +317,8 @@ class CrucesAnalyticsService:
             empresa_id: Optional[int] = None,
             fecha: Optional[str] = None,
             monto_min: Optional[float] = None,
-            forms_url: Optional[str] = None
+            forms_url: Optional[str] = None,
+            validez_dd: int = 1
     ) -> Dict[str, Any]:
         """
         Genera análisis completo de cruces de entidades.
@@ -332,8 +336,7 @@ class CrucesAnalyticsService:
             print(f"🔍 Cargando datos desde BD para cruces...")
 
             # 1. Cargar datos desde BD
-            df_clientes, df_proveedores, df_empleados = self._load_data_from_db(db, empresa_id, fecha=fecha,
-                                                                                monto_min=monto_min)
+            df_clientes, df_proveedores, df_empleados = self._load_data_from_db(db, empresa_id, fecha=fecha, monto_min=monto_min)
 
             if df_clientes.empty:
                 return {
@@ -346,7 +349,7 @@ class CrucesAnalyticsService:
             print(f"   ✅ Empleados: {len(df_empleados)} registros")
 
             print(f"📋 Cargando formularios desde la BD...")
-            df_formularios = self._load_formularios_from_db(db, empresa_id, forms_url=forms_url)
+            df_formularios = self._load_formularios_from_db(db, empresa_id, forms_url=forms_url, validez_dd=validez_dd)
 
             # 2. Procesar con CrucesAnalytics
             print("🔄 Procesando cruces de entidades...")

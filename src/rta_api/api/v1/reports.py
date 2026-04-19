@@ -25,6 +25,7 @@ class PdfRequest(BaseModel):
     oficial_conclusion: Optional[str] = None
     refresh_data: bool = False
     empresa_nombre: Optional[str] = None
+    validez_dd: int = 1
 
 
 @router.post("/pdf")
@@ -33,6 +34,7 @@ def generate_pdf(
         tipo_contraparte: str = Query("Universo General"),
         fecha: Optional[str] = Query(None),
         monto_min: Optional[float] = Query(None),
+        validez_dd: int = Query(1),
         refresh: bool = Query(False),
         db: Session = Depends(get_db),
         claims: dict = Depends(require_jwt),
@@ -45,6 +47,7 @@ def generate_pdf(
         tipo_contraparte=tipo_contraparte,
         db=db,
         filtros_pdf=filtros,
+        validez_dd=validez_dd,
         refresh_data=refresh
     )
 
@@ -65,7 +68,8 @@ def generate_pdf_from_request(
         oficial_conclusion=payload.oficial_conclusion,
         refresh_data=payload.refresh_data,
         tipo_contraparte=payload.tipo_contraparte,
-        company_name=payload.empresa_nombre
+        company_name=payload.empresa_nombre,
+        validez_dd=payload.validez_dd
     )
 
     # Manejo de error si el orquestador falla

@@ -29,7 +29,8 @@ class ReportOrchestrator:
             refresh_data: bool = False,
             tipo_contraparte: str = "Universo General",
             company_name: Optional[str] = None,
-            output_path: Optional[str] = None
+            output_path: Optional[str] = None,
+            validez_dd: int = 1
     ) -> Dict[str, Any]:
 
         src = SourceSessionLocal()
@@ -77,7 +78,7 @@ class ReportOrchestrator:
                         m_min = float(val_m)  # Lo convertimos a float seguro
 
                 cruces_result = cruces_analytics_service.generate_cruces_analytics(
-                    src, empresa_id, fecha=f_desde, monto_min=m_min
+                    src, empresa_id, fecha=f_desde, monto_min=m_min, validez_dd=validez_dd
                 )
                 if cruces_result.get("status") != "success":
                     return cruces_result
@@ -131,7 +132,8 @@ class ReportOrchestrator:
             db: Session,
             fecha: str | None = None,
             monto_min: float | None = None,
-            refresh_data: bool = False
+            refresh_data: bool = False,
+            validez_dd: int = 1
     ) -> Dict[str, Any]:
 
         src = SourceSessionLocal()
@@ -163,9 +165,11 @@ class ReportOrchestrator:
                         print(f"⚡ Dashboard: Reutilizando caché para empresa {empresa_id}")
 
             if not analytics_data:
-                print(f"⚙️ Dashboard: Generando analítica completa desde DB para {empresa_id}")
+                print(f"⚙️ Dashboard: Generando analítica desde DB para {empresa_id} con validez DD: {validez_dd} años")
+
+                # 🟢 PASAMOS validez_dd AL SERVICIO
                 cruces_result = cruces_analytics_service.generate_cruces_analytics(
-                    src, empresa_id, fecha=fecha, monto_min=monto_min
+                    src, empresa_id, fecha=fecha, monto_min=monto_min, validez_dd=validez_dd
                 )
                 if cruces_result.get("status") != "success":
                     return cruces_result
