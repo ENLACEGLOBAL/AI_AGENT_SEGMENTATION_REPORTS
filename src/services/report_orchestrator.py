@@ -11,7 +11,7 @@ from src.services.local_ai_report_service import generate_html_report
 from src.services.local_ai_report_service import local_ai_report_service
 from src.db.repositories.generated_report_repo import GeneratedReportRepository
 from src.db.repositories.html_report_repo import HtmlReportRepository
-from src.db.base import SourceSessionLocal
+from src.db.base import TargetSessionLocal
 from src.services.s3_service import s3_service
 
 
@@ -33,7 +33,7 @@ class ReportOrchestrator:
             validez_dd: int = 1
     ) -> Dict[str, Any]:
 
-        src = SourceSessionLocal()
+        tgt = TargetSessionLocal()
         analytics_data = None
 
         # Validamos si Laravel envió filtros reales para saber si guardar o no el reporte oficial
@@ -48,7 +48,7 @@ class ReportOrchestrator:
                     WHERE empresa_id = :eid 
                     ORDER BY created_at DESC LIMIT 1
                 """)
-                res = src.execute(query, {"eid": empresa_id}).fetchone()
+                res = tgt.execute(query, {"eid": empresa_id}).fetchone()
 
                 if res:
                     if res.data_json and res.data_json != "STORED_IN_DB":
@@ -78,7 +78,7 @@ class ReportOrchestrator:
                         m_min = float(val_m)  # Lo convertimos a float seguro
 
                 cruces_result = cruces_analytics_service.generate_cruces_analytics(
-                    src, empresa_id, fecha=f_desde, monto_min=m_min, validez_dd=validez_dd
+                    tgt, empresa_id, fecha=f_desde, monto_min=m_min, validez_dd=validez_dd
                 )
                 if cruces_result.get("status") != "success":
                     return cruces_result
@@ -92,7 +92,7 @@ class ReportOrchestrator:
                 analytics_data["empresa_nombre"] = company_name
 
         finally:
-            src.close()
+            tgt.close()
 
         # 🟢 NORMALIZACIÓN PARA EL SCRIPT DE PDF (Mantener compatibilidad)
         filtros_normalizados = {

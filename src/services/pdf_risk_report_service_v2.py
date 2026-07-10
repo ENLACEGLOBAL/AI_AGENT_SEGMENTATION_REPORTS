@@ -1144,7 +1144,7 @@ class PDFRiskReportService:
 
     def _save_to_db(self, company_id: int, file_path: str,
                     pdf_content: Optional[bytes]) -> None:
-        db = SourceSessionLocal()
+        db = TargetSessionLocal()
         try:
             db_report = GeneratedReport(
                 file_path=file_path,
