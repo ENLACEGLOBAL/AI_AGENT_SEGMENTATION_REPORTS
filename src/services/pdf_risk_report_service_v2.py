@@ -800,8 +800,13 @@ class PDFRiskReportService:
                     pdf_content=None if s3_url else pdf_bytes,
                 )
 
-            return {"status": "success", "file": virtual_path,
-                    "empresa_id": int(empresa_id), "local_file": None}
+            return {
+                "status": "success",
+                "file": virtual_path,
+                "s3_url": s3_url,
+                "empresa_id": int(empresa_id),
+                "local_file": None
+            }
 
         except Exception as e:
             import traceback
