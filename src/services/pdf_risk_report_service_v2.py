@@ -609,8 +609,10 @@ class PDFRiskReportService:
     def _obtener_nombre_empresa(self, empresa_id: int) -> str:
         from sqlalchemy import create_engine, text
         from src.core.config2 import settings as form_settings
+
         try:
-            url = form_settings.TARGET_DATABASE_URL
+            # 🟢 CORRECCIÓN: Cambiar TARGET por SOURCE para conectar a dbeg365
+            url = form_settings.SOURCE_DATABASE_URL
             if "mysql+mysqlconnector" not in url and url.startswith("mysql://"):
                 url = url.replace("mysql://", "mysql+pymysql://")
 
