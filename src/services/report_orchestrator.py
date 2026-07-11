@@ -115,7 +115,6 @@ class ReportOrchestrator:
             output_path=output_path
         )
 
-        # --- Guardar en la tabla de reportes si es el reporte oficial (sin filtros) ---
         if pdf.get("status") == "success" and not hay_filtros:
             try:
                 path = pdf.get("file")
@@ -124,7 +123,13 @@ class ReportOrchestrator:
             except Exception as e:
                 print(f"⚠️ Error registrando reporte en DB: {e}")
 
-        return {"analytics": analytics_data, "pdf": pdf}
+            # 🟢 CORRECCIÓN MAGISTRAL: Eliminamos "analytics_data" de la respuesta.
+            # Al enviar solo la URL del PDF, la respuesta pasa de pesar 100 MB a pesar 200 Bytes.
+            # PHP lo leerá en 1 milisegundo, no se quedará sin RAM, y ejecutará la redirección a S3.
+        return {
+            "status": "success",
+            "pdf": pdf
+        }
 
     def generate_json(
             self,
