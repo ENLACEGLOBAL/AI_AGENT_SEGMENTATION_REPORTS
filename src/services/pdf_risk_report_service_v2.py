@@ -32,6 +32,7 @@ from reportlab.lib.utils import ImageReader
 from reportlab.lib.units import inch
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.graphics.shapes import Drawing, Rect, String, Group
 
 from src.db.base import TargetSessionLocal, SourceSessionLocal
 from src.db.models.generated_report import GeneratedReport
@@ -65,146 +66,10 @@ def _fig_to_img(fig, w_inch, h_inch, dpi=150):
 
 
 # ══════════════════════════════════════════════════════════════
-# PORTADA  (página 1 — canvas puro)
+# FOOTER (todas las páginas)
 # ══════════════════════════════════════════════════════════════
-def _draw_cover(canvas_obj, doc, empresa_nombre, empresa_id,
-                periodo, tipo_contraparte, logo_path):
+def _draw_footer(canvas_obj, doc):
     W, H = A4
-
-    # Fondo blanco humo
-    canvas_obj.setFillColor(colors.HexColor("#F8FAFC"))
-    canvas_obj.rect(0, 0, W, H, fill=1, stroke=0)
-
-    # Círculos decorativos tipo red/graph (esquinas)
-    def draw_net(cx, cy, r):
-        canvas_obj.saveState()
-        canvas_obj.setStrokeColor(colors.HexColor("#CBD5E1"))
-        canvas_obj.setLineWidth(0.5)
-        canvas_obj.circle(cx, cy, r, fill=0, stroke=1)
-        canvas_obj.circle(cx, cy, r * 0.6, fill=0, stroke=1)
-        n = 10
-        for i in range(n):
-            angle = 2 * math.pi * i / n
-            nx, ny = cx + r * math.cos(angle), cy + r * math.sin(angle)
-            canvas_obj.setFillColor(colors.HexColor("#94A3B8"))
-            canvas_obj.circle(nx, ny, 3.5, fill=1, stroke=0)
-            canvas_obj.setStrokeColor(colors.HexColor("#CBD5E1"))
-            canvas_obj.line(cx, cy, nx, ny)
-        canvas_obj.restoreState()
-
-    draw_net(W - 55, H - 55, 140)
-    draw_net(60, 100, 110)
-
-    # Logo centrado
-    if logo_path and os.path.exists(logo_path):
-        try:
-            ir = ImageReader(logo_path)
-            iw, ih = ir.getSize()
-            lw = 2.8 * inch
-            lh = lw * (ih / float(iw))
-            if lh > 1.1 * inch:
-                lh = 1.1 * inch
-                lw = lh * (iw / float(ih))
-            canvas_obj.drawImage(logo_path, (W - lw) / 2, H - lh - 48,
-                                 width=lw, height=lh,
-                                 preserveAspectRatio=True, mask="auto")
-        except Exception:
-            pass
-
-    canvas_obj.setFillColor(colors.HexColor(C["gray"]))
-    canvas_obj.setFont("Helvetica", 9)
-    canvas_obj.drawCentredString(W / 2, H - 168, "Expertos en Auditoría y Cumplimiento")
-
-    # 🟢 MODIFICACIÓN 1: Título y subtítulos actualizados
-    canvas_obj.setFillColor(colors.HexColor(C["dark_text"]))
-    canvas_obj.setFont("Helvetica-Bold", 40)
-    canvas_obj.drawCentredString(W / 2, H * 0.57, "Informe Ejecutivo")
-
-    # Subtítulo (Más pegado al título principal)
-    canvas_obj.setFillColor(colors.HexColor(C["slate"]))
-    canvas_obj.setFont("Helvetica", 15)
-    canvas_obj.drawCentredString(W / 2, H * 0.57 - 40, "Identificación de Multi-vínculos")
-    canvas_obj.drawCentredString(W / 2, H * 0.57 - 60, "y contrapartes sin debida diligencia")
-
-    # Badge pill con fecha
-    pw, ph = 320, 34
-    px = (W - pw) / 2
-    py = H * 0.21
-    canvas_obj.setStrokeColor(colors.HexColor(C["header_bg"]))
-    canvas_obj.setFillColor(colors.white)
-    canvas_obj.setLineWidth(1.5)
-    canvas_obj.roundRect(px, py, pw, ph, 17, fill=1, stroke=1)
-    canvas_obj.setFillColor(colors.HexColor(C["dark_text"]))
-    canvas_obj.setFont("Helvetica-Bold", 11)
-
-    # 🟢 MODIFICACIÓN 2: Meses en español de forma manual
-    meses_es = ["enero", "febrero", "marzo", "abril", "mayo", "junio",
-                "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
-    hoy = datetime.now()
-    fecha_espanol = f"{hoy.day} de {meses_es[hoy.month - 1]} de {hoy.year}"
-
-    canvas_obj.drawCentredString(
-        W / 2, py + 11,
-        f"Plataforma Riesgos 365  |  {fecha_espanol}"
-    )
-
-    # Barra de datos inferior (Fondo blanco, borde superior cyan)
-    canvas_obj.setFillColor(colors.white)
-    canvas_obj.rect(0, 0, W, 62, fill=1, stroke=0)
-    canvas_obj.setFillColor(colors.HexColor(C["header_bg"]))
-    canvas_obj.rect(0, 60, W, 2, fill=1, stroke=0)
-
-    def footer_label(label, value, x, align="left"):
-        canvas_obj.setFillColor(colors.HexColor(C["gray"]))
-        canvas_obj.setFont("Helvetica", 7)
-        if align == "right":
-            canvas_obj.drawRightString(x, 46, label)
-        else:
-            canvas_obj.drawString(x, 46, label)
-        canvas_obj.setFillColor(colors.HexColor(C["dark_text"]))
-        canvas_obj.setFont("Helvetica-Bold", 10)
-        if align == "right":
-            canvas_obj.drawRightString(x, 30, str(value)[:50])
-        else:
-            canvas_obj.drawString(x, 30, str(value)[:50])
-
-    footer_label("EMPRESA", empresa_nombre, 20)
-    footer_label("PERÍODO", periodo, 280)
-
-    # 🟢 MODIFICACIÓN 3: Cambio de Alcance
-    footer_label("ALCANCE", "Monitoreo Contrapartes", W - 20, "right")
-
-
-# ══════════════════════════════════════════════════════════════
-# HEADER / FOOTER páginas interiores
-# ══════════════════════════════════════════════════════════════
-def _draw_inner(canvas_obj, doc, logo_path=None):
-    W, H = A4
-    canvas_obj.setFillColor(colors.white)
-    canvas_obj.rect(0, H - 38, W, 38, fill=1, stroke=0)
-    canvas_obj.setStrokeColor(colors.HexColor(C["header_bg"]))
-    canvas_obj.setLineWidth(2)
-    canvas_obj.line(0, H - 38, W, H - 38)
-
-    if logo_path and os.path.exists(logo_path):
-        try:
-            ir = ImageReader(logo_path)
-            iw, ih = ir.getSize()
-            lw = 1.1 * inch
-            lh = lw * (ih / float(iw))
-            if lh > 0.30 * inch:
-                lh = 0.30 * inch
-                lw = lh * (iw / float(ih))
-            canvas_obj.drawImage(logo_path, 14, H - 36, width=lw, height=lh,
-                                 preserveAspectRatio=True, mask="auto")
-        except Exception:
-            pass
-
-    canvas_obj.setFillColor(colors.HexColor(C["dark_text"]))
-    canvas_obj.setFont("Helvetica-Bold", 8)
-    canvas_obj.drawRightString(W - 14, H - 22,
-                               "Informe Ejecutivo de Riesgo — Análisis de Relaciones Cruzadas")
-
     canvas_obj.setFillColor(colors.HexColor(C["light"]))
     canvas_obj.rect(0, 0, W, 26, fill=1, stroke=0)
     canvas_obj.setStrokeColor(colors.HexColor(C["border"]))
@@ -217,254 +82,342 @@ def _draw_inner(canvas_obj, doc, logo_path=None):
 
 
 # ══════════════════════════════════════════════════════════════
-# GRÁFICO 1 – KPI CARDS  (slide 2)
+# BANNER DE TÍTULO — se aplica en todas las páginas
 # ══════════════════════════════════════════════════════════════
-def _chart_kpi_panel(total_reg, cruces_count, pct_cruces, riesgo_prom,
-                     triple_count, sin_dd_total, total_contra):
-    fig, axes = plt.subplots(2, 3, figsize=(11, 5.2))
-    fig.patch.set_facecolor("#F8FAFC")
-    plt.subplots_adjust(hspace=0.40, wspace=0.28)
+def _draw_title_banner(canvas_obj, doc, empresa_nombre, periodo,
+                       tipo_text, logo_path, banner_height=78):
+    W, H = A4
+    y0 = H - banner_height
+
+    canvas_obj.setFillColor(colors.HexColor(C["header_bg"]))
+    canvas_obj.rect(0, y0, W, banner_height, fill=1, stroke=0)
+
+    # Logo anclado a la esquina superior izquierda (pequeño, sin invadir
+    # el área centrada del título)
+    if logo_path and os.path.exists(logo_path):
+        try:
+            ir = ImageReader(logo_path)
+            iw, ih = ir.getSize()
+            lh = 20
+            lw = lh * (iw / float(ih))
+            if lw > 80:
+                lw = 80
+                lh = lw * (ih / float(iw))
+            lx = 14
+            ly = H - 14 - lh
+            canvas_obj.drawImage(logo_path, lx, ly, width=lw, height=lh,
+                                 preserveAspectRatio=True, mask="auto")
+        except Exception:
+            pass
+
+    # Título y subtítulo centrados en el ancho completo de la página
+    canvas_obj.setFillColor(colors.white)
+    canvas_obj.setFont("Helvetica-Bold", 17)
+    canvas_obj.drawCentredString(W / 2, y0 + banner_height * 0.60,
+                                 "INFORME EJECUTIVO DE RIESGOS")
+
+    canvas_obj.setFont("Helvetica", 9.5)
+    sub = f"Empresa: {empresa_nombre}   |   Periodo: {periodo}   |   Tipo de contraparte: {tipo_text}"
+    canvas_obj.drawCentredString(W / 2, y0 + banner_height * 0.28, sub)
+
+    _draw_footer(canvas_obj, doc)
+
+
+# ══════════════════════════════════════════════════════════════
+# ESTILOS COMPARTIDOS PARA COMPONENTES NATIVOS (look "dashboard web")
+# ══════════════════════════════════════════════════════════════
+def _bar_drawing(pct, width=170, height=8, color=None):
+    """Barra horizontal simple: fondo gris + relleno proporcional."""
+    color = color or C["header_bg"]
+    pct = max(0.0, min(100.0, pct))
+    d = Drawing(width, height)
+    d.add(Rect(0, 0, width, height, rx=height / 2, ry=height / 2,
+               fillColor=colors.HexColor("#E9EEF3"), strokeColor=None))
+    fill_w = max(height, width * (pct / 100.0)) if pct > 0 else 0
+    if fill_w > 0:
+        d.add(Rect(0, 0, fill_w, height, rx=height / 2, ry=height / 2,
+                   fillColor=colors.HexColor(color), strokeColor=None))
+    return d
+
+
+# ══════════════════════════════════════════════════════════════
+# BLOQUE 1 – TARJETAS KPI  (estilo "Panel de control general")
+# ══════════════════════════════════════════════════════════════
+def _kpi_card(label, value, sub, value_color, accent_color):
+    label_style = ParagraphStyle("KL", fontName="Helvetica", fontSize=9.5,
+                                 textColor=colors.HexColor(C["dark_text"]),
+                                 leading=13)
+    value_style = ParagraphStyle("KV", fontName="Helvetica-Bold", fontSize=22,
+                                 textColor=colors.HexColor(value_color),
+                                 leading=26, spaceBefore=6, spaceAfter=4)
+    sub_style = ParagraphStyle("KS", fontName="Helvetica", fontSize=8.5,
+                               textColor=colors.HexColor(C["gray"]), leading=11)
+
+    cell = [
+        [Paragraph(label, label_style)],
+        [Paragraph(value, value_style)],
+    ]
+    if sub:
+        cell.append([Paragraph(sub, sub_style)])
+
+    inner = Table(cell, colWidths=[220])
+    inner.setStyle(TableStyle([
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 1),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+    ]))
+
+    card = Table([[inner]], colWidths=[236])
+    card.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor(C["border"])),
+        ("LINEABOVE", (0, 0), (-1, 0), 3, colors.HexColor(accent_color)),
+        ("BACKGROUND", (0, 0), (-1, -1), colors.white),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 16),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 16),
+        ("LEFTPADDING", (0, 0), (-1, -1), 10),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+    ]))
+    return card
+
+
+def _kpi_panel_grid(total_reg, cruces_count, pct_cruces, triple_count,
+                    sin_dd_total, total_contra):
+    """Panel de control general (KPIs estratégicos) — grid 2x2 como el dashboard."""
 
     def nivel(val, t1, t2):
         if val <= t1:
-            return C["teal"], "Bajo"
+            return C["teal"]
         elif val <= t2:
-            return C["orange"], "Medio"
-        return C["pink"], "Alto"
+            return C["orange"]
+        return C["pink"]
+
+    pct_muestra = 100.0
+    pct_sin_dd = (sin_dd_total / total_reg * 100.0) if total_reg else 0.0
 
     cards = [
-        ("Total muestra analizada",
-         f"{total_reg:,}".replace(",", "."), "registros", C["dark_text"], None, None),
-        ("% Contrapartes con\nConflictos de Interés",
-         f"{pct_cruces:.2f}%".replace(".", ","), "",
-         C["dark_text"], *nivel(pct_cruces, 1, 5)),
-        ("Contrapartes con\nConflictos de Interés",
-         f"{cruces_count:,}".replace(",", "."), "contrapartes",
-         C["dark_text"], *nivel(pct_cruces, 1, 5)),
-        ("Casos con triple relación\n(Cliente-Proveedor-Empleado)",
-         f"{triple_count} casos", "",
-         C["dark_text"], *nivel(triple_count, 0, 5)),
-        ("Transacciones de contrapartes sin\ndebida diligencia actualizada",
-         f"{sin_dd_total:,}".replace(",", "."), "sin DD",
-         C["dark_text"], *nivel(sin_dd_total, 0, 10)),
-        ("Total contrapartes\nanalizadas",
-         f"{total_contra:,}".replace(",", "."), "contrapartes",
-         C["dark_text"], None, None),
+        ("Muestra analizada",
+         f"{pct_muestra:.0f}%", f"{total_reg:,}".replace(",", ".") +
+         f" Registros en {total_contra:,}".replace(",", ".") + " contrapartes",
+         C["dark_text"], C["header_bg"]),
+        ("Contrapartes con conflictos\nde interés",
+         f"{pct_cruces:.2f}%".replace(".", ","),
+         f"{cruces_count:,}".replace(",", ".") + " contrapartes",
+         nivel(pct_cruces, 1, 5), nivel(pct_cruces, 1, 5)),
+        ("Casos con triple relación\n(Cliente-proveedor-empleado)",
+         f"{triple_count} caso" + ("" if triple_count == 1 else "s"),
+         f"{cruces_count:,}".replace(",", ".") + " contrapartes",
+         nivel(triple_count, 0, 5), nivel(triple_count, 0, 5)),
+        ("Transacciones de contrapartes\nsin debida diligencia actualizada",
+         f"{pct_sin_dd:.0f}%",
+         f"{sin_dd_total:,}".replace(",", ".") + " transacciones",
+         nivel(pct_sin_dd, 30, 60), nivel(pct_sin_dd, 30, 60)),
     ]
 
-    for ax, (label, val, sub, vcol, dcol, nivel_txt) in zip(axes.flat, cards):
-        ax.set_facecolor("white")
-        ax.set_xlim(0, 1)
-        ax.set_ylim(0, 1)
-        ax.axis("off")
+    built = []
+    for label, val, sub, vcol, acol in cards:
+        built.append(_kpi_card(label.replace("\n", "<br/>"), val, sub, vcol, acol))
 
-        rect = FancyBboxPatch((0.03, 0.04), 0.94, 0.92,
-                              boxstyle="round,pad=0.02",
-                              lw=1.2, edgecolor="#E2E8F0", facecolor="white")
-        ax.add_patch(rect)
-        # Línea superior cyan
-        ax.plot([0.03, 0.97], [0.96, 0.96], lw=3, color=C["header_bg"],
-                solid_capstyle="round")
-
-        ax.text(0.09, 0.84, label, fontsize=8.5, color=C["gray"],
-                va="top", ha="left", multialignment="left")
-        ax.text(0.09, 0.50, val, fontsize=20, fontweight="bold",
-                color=vcol, va="center", ha="left")
-        if sub:
-            ax.text(0.09, 0.24, sub, fontsize=8.5, color=C["gray"], va="center")
-
-        if dcol:
-            c = plt.Circle((0.82, 0.42), 0.11, color=dcol, alpha=0.90, zorder=5)
-            ax.add_patch(c)
-            glow = plt.Circle((0.82, 0.42), 0.15, color=dcol, alpha=0.15, zorder=4)
-            ax.add_patch(glow)
-            ax.text(0.82, 0.20, nivel_txt, fontsize=7.5, fontweight="bold",
-                    color=dcol, ha="center", va="center", multialignment="center")
-
-    return _fig_to_img(fig, 7.0, 3.6)
+    row1 = [built[0], built[1]]
+    row2 = [built[2], built[3]]
+    grid = Table([row1, row2], colWidths=[248, 248], hAlign="LEFT")
+    grid.setStyle(TableStyle([
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+    ]))
+    return grid
 
 
 # ══════════════════════════════════════════════════════════════
-# GRÁFICO 2 – BARRAS HORIZONTALES + CARD  (slide 3)
+# BLOQUE 2 – DISTRIBUCIÓN DE MULTI-VÍNCULOS (lista con barras)
 # ══════════════════════════════════════════════════════════════
-def _chart_relaciones(counts: dict):
-    fig, (ax_bar, ax_card) = plt.subplots(1, 2, figsize=(11, 3.8),
-                                          gridspec_kw={"width_ratios": [1.5, 1]})
-    fig.patch.set_facecolor("#F8FAFC")
+def _distribucion_multivinculos(counts: dict):
+    title_style = ParagraphStyle("DT", fontName="Helvetica-Bold", fontSize=11,
+                                 textColor=colors.HexColor(C["dark_text"]), spaceAfter=2)
+    sub_style = ParagraphStyle("DS", fontName="Helvetica", fontSize=8.5,
+                               textColor=colors.HexColor(C["gray"]), spaceAfter=8)
+    row_val_style = ParagraphStyle("RV", fontName="Helvetica-Bold", fontSize=9.5,
+                                   textColor=colors.HexColor(C["dark_text"]),
+                                   alignment=TA_LEFT)
 
-    labels = list(counts.keys())
-    values = list(counts.values())
-    bar_colors = []
-    for lbl in labels:
+    total = sum(counts.values()) or 1
+
+    def color_for(lbl):
         if "Triple" in lbl:
-            bar_colors.append(C["pink"])
-        elif "Cliente" in lbl and "Proveedor" in lbl:
-            bar_colors.append(C["orange"])
-        elif "Proveedor" in lbl and "Empleado" in lbl:
-            bar_colors.append(C["header_bg"])
-        else:
-            bar_colors.append(C["teal"])
+            return C["pink"]
+        if "Cliente" in lbl and "Proveedor" in lbl:
+            return C["pink"]
+        if "Proveedor" in lbl and "Empleado" in lbl:
+            return C["header_bg"]
+        return C["teal"]
 
-    ax_bar.set_facecolor("white")
-    bars = ax_bar.barh(labels, values, color=bar_colors, edgecolor="none", height=0.50)
-    max_v = max(values) if any(v > 0 for v in values) else 1
-    for bar, v in zip(bars, values):
-        ax_bar.text(v + max_v * 0.025, bar.get_y() + bar.get_height() / 2,
-                    str(v), va="center", ha="left",
-                    fontsize=11, fontweight="bold", color=C["dark_text"])
-    ax_bar.set_xlabel("Número de casos", fontsize=9, color=C["gray"])
-    ax_bar.tick_params(axis="y", labelsize=10, colors=C["dark_text"])
-    ax_bar.tick_params(axis="x", colors="#94A3B8", labelsize=8)
-    for sp in ["top", "right", "left"]:
-        ax_bar.spines[sp].set_visible(False)
-    ax_bar.grid(axis="x", alpha=0.22, color="#CBD5E1")
-    ax_bar.set_xlim(0, max_v * 1.25)
-
-    # 🟢 MODIFICACIÓN 4: Se comenta el título interno redundante
-    # ax_bar.set_title("Distribución Estratégica de Relaciones Cruzadas",
-    #                  fontsize=11, fontweight="bold", color=C["dark_text"], pad=10)
-
-    # Card de análisis
-    ax_card.set_facecolor("white")
-    ax_card.set_xlim(0, 1)
-    ax_card.set_ylim(0, 1)
-    ax_card.axis("off")
-    rect = FancyBboxPatch((0.04, 0.04), 0.92, 0.92,
-                          boxstyle="round,pad=0.02",
-                          lw=1.2, edgecolor="#E2E8F0", facecolor="white")
-    ax_card.add_patch(rect)
-
-    max_label = max(counts, key=counts.get) if any(counts.values()) else "N/A"
-    lines = [
-        (0.88, "Análisis Ejecutivo", 10, "bold", C["dark_text"]),
-        (0.72, f"Mayor concentración:", 8.5, "bold", C["slate"]),
-        (0.63, f"{max_label}", 8.5, "normal", C["header_bg"]),
-        (0.50, "Los casos de Triple Relación", 8, "normal", C["gray"]),
-        (0.42, "incrementan la exposición por", 8, "normal", C["gray"]),
-        (0.34, "conflicto estructural.", 8, "normal", C["gray"]),
-        (0.22, "Las relaciones múltiples aumentan", 8, "normal", C["gray"]),
-        (0.14, "el riesgo de favorecimiento indebido.", 8, "normal", C["gray"]),
-    ]
-    for y, txt, fs, fw, fc in lines:
-        ax_card.text(0.10, y, txt, fontsize=fs, fontweight=fw,
-                     color=fc, va="center", ha="left")
-
-    # Dots decorativos
-    for i, (dx, dc) in enumerate(zip([0.12, 0.22, 0.32, 0.42],
-                                     [C["teal"], C["pink"], C["orange"], C["header_bg"]])):
-        ax_card.add_patch(plt.Circle((dx, 0.05), 0.04, color=dc, zorder=5))
-
-    return _fig_to_img(fig, 7.0, 3.0)
-
-
-# ══════════════════════════════════════════════════════════════
-# GRÁFICO 3 – PIRÁMIDE 3D  (slide 4)
-# ══════════════════════════════════════════════════════════════
-def _chart_piramide(total_contra, sin_dd_contra, alto_riesgo_sin_form):
-    fig, ax = plt.subplots(figsize=(10, 5.2))
-    fig.patch.set_facecolor("#F8FAFC")
-    ax.set_facecolor("#F8FAFC")
-    ax.set_xlim(0, 10)
-    ax.set_ylim(0, 6.5)
-    ax.axis("off")
-
-    # 🟢 MODIFICACIÓN 5: Se comenta el título interno redundante
-    # ax.set_title("Estado de Debida Diligencia y Riesgo Estratégico",
-    #              fontsize=13, fontweight="bold", color=C["dark_text"], pad=12)
-
-    # 🟢 MODIFICACIÓN 5b: Agregamos parámetros de offset X (line_x, text_x) para empujar el texto verde a la derecha
-    layers = [
-        # (tw, yb, h, col, label, sub1, sub2, line_x, text_x)
-
-        # 🟢 TOP (ROJO): Personas sin DD y de Riesgo Alto
-        (0.9, 4.2, 1.0, C["pink"], "Prioridad Crítica (Alto)",
-         "Contrapartes de Alto Riesgo SIN Debida Diligencia",
-         f"{alto_riesgo_sin_form} contrapartes urgentes", 6.2, 6.38),
-
-        # 🟢 MEDIO (AMARILLO): Personas sin DD
-        (2.4, 2.6, 1.4, C["orange"], "Brecha de Cumplimiento (Medio)",
-         "Contrapartes SIN Debida Diligencia",
-         f"{sin_dd_contra:,} contrapartes".replace(",", "."), 6.2, 6.38),
-
-        # 🟢 BASE (VERDE): Total de personas evaluadas - MOVIDO A LA DERECHA
-        (4.2, 0.5, 1.9, C["teal"], "Alcance de la Muestra (Base)",
-         "Total Contrapartes Analizadas",
-         f"{total_contra:,} contrapartes en la muestra".replace(",", "."), 6.8, 6.98),
+    tbl_rows = [
+        [Paragraph("<b>Distribución de multi-vínculos</b>", title_style), "", ""],
+        [Paragraph("Concentración por tipo de relación cruzada", sub_style), "", ""],
     ]
 
-    cx = 3.8
-    for (tw, yb, h, col, label, sub1, sub2, line_x, text_x) in layers:
-        bw = tw + h * 0.85
-        # Cara frontal
-        verts_f = [(cx - bw / 2, yb), (cx + bw / 2, yb),
-                   (cx + tw / 2, yb + h), (cx - tw / 2, yb + h)]
-        ax.add_patch(MplPolygon(verts_f, closed=True, color=col, alpha=0.90, zorder=3))
-        # Cara superior (sombra clara)
-        d = 0.28
-        verts_t = [(cx - tw / 2, yb + h), (cx + tw / 2, yb + h),
-                   (cx + tw / 2 + d, yb + h + d * 0.45),
-                   (cx - tw / 2 + d, yb + h + d * 0.45)]
-        r, g, b = int(col[1:3], 16) / 255, int(col[3:5], 16) / 255, int(col[5:7], 16) / 255
-        hh, s, v = colorsys.rgb_to_hsv(r, g, b)
-        r2, g2, b2 = colorsys.hsv_to_rgb(hh, s * 0.85, min(v * 1.28, 1.0))
-        top_col = f"#{int(r2 * 255):02x}{int(g2 * 255):02x}{int(b2 * 255):02x}"
-        ax.add_patch(MplPolygon(verts_t, closed=True, color=top_col, alpha=0.90, zorder=4))
+    for lbl, v in counts.items():
+        pct = (v / total * 100.0) if total else 0.0
+        col = color_for(lbl)
+        bar = _bar_drawing(pct if v > 0 else 0, width=230, height=6, color=col)
+        right_txt = f"<b>{v} casos - {pct:.0f}%</b>" if v > 0 else "<b>0 Casos</b>"
+        tbl_rows.append([
+            Paragraph(lbl, row_val_style),
+            bar,
+            Paragraph(right_txt, ParagraphStyle(
+                "RT", fontName="Helvetica-Bold", fontSize=9,
+                textColor=colors.HexColor(col if v > 0 else C["gray"]),
+                alignment=TA_LEFT)),
+        ])
 
-        # Línea conectora y texto usando las nuevas coordenadas X
-        mid_y = yb + h / 2
-        ax.annotate("", xy=(line_x, mid_y), xytext=(cx + bw / 2 + 0.1, mid_y),
-                    arrowprops=dict(arrowstyle="-", color=col, lw=1.2))
-        ax.scatter([line_x], [mid_y], s=45, color=col, zorder=5)
-        ax.text(text_x, mid_y + 0.22, label, fontsize=9, fontweight="bold",
-                color=col, va="bottom", ha="left")
-        ax.text(text_x, mid_y - 0.04, sub1, fontsize=7.5, color=C["slate"],
-                va="top", ha="left")
-        ax.text(text_x, mid_y - 0.30, sub2, fontsize=7.5, color=C["gray"],
-                va="top", ha="left")
-
-    return _fig_to_img(fig, 7.2, 3.9)
+    t = Table(tbl_rows, colWidths=[150, 230, 110])
+    t.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("SPAN", (0, 0), (-1, 0)),
+        ("SPAN", (0, 1), (-1, 1)),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LINEBELOW", (0, 2), (-1, -2), 0.5, colors.HexColor(C["border"])),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    return t
 
 
 # ══════════════════════════════════════════════════════════════
-# GRÁFICO 4 – TIMELINE PLAN DE ACCIÓN  (slide 6)
+# BLOQUE 3 – AVANCE DE DEBIDA DILIGENCIA (barra segmentada)
 # ══════════════════════════════════════════════════════════════
-def _chart_plan_accion():
-    fig, ax = plt.subplots(figsize=(10, 2.8))
-    fig.patch.set_facecolor("#F8FAFC")
-    ax.set_facecolor("#F8FAFC")
-    ax.set_xlim(0, 10)
-    ax.set_ylim(0, 3.0)
-    ax.axis("off")
-    ax.set_title("Plan de Acción y Conclusión Ejecutiva",
-                 fontsize=12, fontweight="bold", color=C["dark_text"], pad=10)
+def _avance_debida_diligencia(pct_cumplido, pct_pendiente, pct_critico,
+                              n_cumplido, n_pendiente, n_critico, n_total):
+    sub_style = ParagraphStyle("ADD_S", fontName="Helvetica", fontSize=8.5,
+                               textColor=colors.HexColor(C["gray"]), spaceAfter=8)
 
-    # 🟢 MODIFICACIÓN 6: Textos actualizados del plan de acción
+    width, height = 460, 16
+    d = Drawing(width, height)
+    d.add(Rect(0, 0, width, height, rx=height / 2, ry=height / 2,
+               fillColor=colors.HexColor("#E9EEF3"), strokeColor=None))
+    x = 0
+    for pct, col in [(pct_cumplido, C["teal"]), (pct_pendiente, C["orange"]),
+                     (pct_critico, C["pink"])]:
+        w = width * (pct / 100.0)
+        if w > 0:
+            d.add(Rect(x, 0, w, height, fillColor=colors.HexColor(col), strokeColor=None))
+            x += w
+
+    legend_num_style = lambda col: ParagraphStyle(
+        f"LN_{col}", fontName="Helvetica-Bold", fontSize=15,
+        textColor=colors.HexColor(col), alignment=TA_CENTER)
+    legend_lbl_style = ParagraphStyle("LL", fontName="Helvetica-Bold", fontSize=9,
+                                      textColor=colors.HexColor(C["dark_text"]),
+                                      alignment=TA_CENTER)
+    legend_sub_style = ParagraphStyle("LSub", fontName="Helvetica", fontSize=8,
+                                      textColor=colors.HexColor(C["gray"]),
+                                      alignment=TA_CENTER)
+
+    legend_data = [
+        ("Cumplido", C["teal"], pct_cumplido, n_cumplido),
+        ("Pendiente", C["orange"], pct_pendiente, n_pendiente),
+        ("Crítico", C["pink"], pct_critico, n_critico),
+    ]
+    legend_row = []
+    for lbl, col, pct, n in legend_data:
+        cell = Table([
+            [Paragraph(lbl, legend_lbl_style)],
+            [Paragraph(f"{pct:.0f}%", legend_num_style(col))],
+            [Paragraph(f"{n} de {n_total}", legend_sub_style)],
+        ], colWidths=[150])
+        cell.setStyle(TableStyle([
+            ("TOPPADDING", (0, 0), (-1, -1), 2),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ]))
+        legend_row.append(cell)
+
+    legend_tbl = Table([legend_row], colWidths=[150, 150, 150])
+    legend_tbl.setStyle(TableStyle([
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LINEBEFORE", (1, 0), (1, 0), 0.5, colors.HexColor(C["border"])),
+        ("LINEBEFORE", (2, 0), (2, 0), 0.5, colors.HexColor(C["border"])),
+        ("TOPPADDING", (0, 0), (-1, -1), 10),
+    ]))
+
+    wrapper = Table([
+        [Paragraph("Formatos de conocimiento de contraparte", sub_style)],
+        [d],
+        [Spacer(1, 10)],
+        [legend_tbl],
+    ], colWidths=[460])
+    wrapper.setStyle(TableStyle([
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+    ]))
+    return wrapper
+
+
+# ══════════════════════════════════════════════════════════════
+# BLOQUE 4 – PLAN DE ACCIÓN DE CONTRAPARTE (3 tarjetas)
+# ══════════════════════════════════════════════════════════════
+def _plan_accion_cards():
     steps = [
-        (1.5, C["pink"], "1", "Intervención\nInmediata",
-         "Actualizar DD en\ncasos identificados"),
-        (5.0, C["orange"], "2", "Justificación\nde Vínculos",
-         "Actualizar D.D con\njustificación de Vínculo"),
-        (8.5, C["teal"], "3", "Monitoreo\nActivo",
-         "Filtración por\nmontos de D.D"),
+        ("01", C["pink"], "Intervención inmediata",
+         "Actualizar DD en las contrapartes identificadas con mayor exposición."),
+        ("02", C["orange"], "Justificación de vínculos",
+         "Documentar la justificación de los cruces Cliente – Proveedor."),
+        ("03", C["teal"], "Monitoreo activo",
+         "Configurar alertas por monto y reglas de re-verificación periódica."),
     ]
-    ax.plot([1.5, 8.5], [2.05, 2.05], color="#CBD5E1", lw=2.5,
-            solid_capstyle="round", zorder=1)
 
-    for (x, col, num, label, desc) in steps:
-        ax.add_patch(plt.Circle((x, 2.05), 0.40, color=col, zorder=3))
-        ax.add_patch(plt.Circle((x, 2.05), 0.54, color=col, alpha=0.18, zorder=2))
-        ax.text(x, 2.05, num, fontsize=17, fontweight="bold", color="white",
-                ha="center", va="center", zorder=4)
-        ax.text(x, 1.45, label, fontsize=9, fontweight="bold", color=col,
-                ha="center", va="top", multialignment="center", zorder=4)
-        ax.text(x, 0.78, desc, fontsize=7.8, color=C["slate"],
-                ha="center", va="top", multialignment="center", zorder=4)
+    num_style = lambda col: ParagraphStyle(
+        f"PN_{col}", fontName="Helvetica-Bold", fontSize=13,
+        textColor=colors.HexColor(col))
+    title_style = lambda col: ParagraphStyle(
+        f"PT_{col}", fontName="Helvetica-Bold", fontSize=10.5,
+        textColor=colors.HexColor(col), spaceBefore=4, spaceAfter=4)
+    desc_style = ParagraphStyle("PD", fontName="Helvetica", fontSize=8.5,
+                                textColor=colors.HexColor(C["slate"]), leading=12)
 
-    return _fig_to_img(fig, 7.0, 2.4)
+    cells = []
+    for num, col, title, desc in steps:
+        inner = Table([
+            [Paragraph(num, num_style(col))],
+            [Paragraph(title, title_style(col))],
+            [Paragraph(desc, desc_style)],
+        ], colWidths=[150])
+        inner.setStyle(TableStyle([
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 1),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+        ]))
+        card = Table([[inner]], colWidths=[156])
+        card.setStyle(TableStyle([
+            ("LINEABOVE", (0, 0), (-1, 0), 3, colors.HexColor(col)),
+            ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor(C["border"])),
+            ("TOPPADDING", (0, 0), (-1, -1), 12),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+            ("LEFTPADDING", (0, 0), (-1, -1), 12),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+        ]))
+        cells.append(card)
+
+    row = Table([cells], colWidths=[168, 168, 168])
+    row.setStyle(TableStyle([
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    return row
 
 
 # ══════════════════════════════════════════════════════════════
-# TABLA DETALLE  (estilo dark UX — slide 5)
+# TABLA DETALLE  (estilo dark UX — Top 10)
 # ══════════════════════════════════════════════════════════════
 def _build_detail_table(sin_dd_list, table_cell_style):
     if not sin_dd_list:
@@ -518,7 +471,7 @@ def _build_detail_table(sin_dd_list, table_cell_style):
         Paragraph("Estado DD", hdr_style),
     ]]
 
-    for r in sin_dd_list[:15]:
+    for r in sin_dd_list[:10]:
         nombre_raw = r.get("nombre") or r.get("empresa") or "N/D"
         nombre_clean = fmt(nombre_raw)
 
@@ -1014,7 +967,6 @@ class PDFRiskReportService:
             "Cliente – Proveedor": int(tipos.get("cliente_proveedor") or 0),
             "Proveedor – Empleado": int(tipos.get("proveedor_empleado") or 0),
             "Cliente – Empleado": int(tipos.get("cliente_empleado") or 0),
-            "Triple Relación": triple_count,
         }
 
         periodo = data.get("periodo_calculado", "Histórico Completo")
@@ -1028,25 +980,42 @@ class PDFRiskReportService:
         dd_pct = stats_dd.get("porcentaje_completado")
         dd_pct_str = f"{float(dd_pct):.1f}%" if dd_pct is not None else "N/D"
 
-        # ── Callbacks ─────────────────────────────────────────────────────
-        def on_first_page(cv, doc_obj):
-            _draw_cover(cv, doc_obj, empresa_nombre=empresa_nombre,
-                        empresa_id=empresa_id, periodo=periodo,
-                        tipo_contraparte=tipo_contraparte, logo_path=logo_path)
+        generated_at = datetime.now().strftime("%d/%m/%Y %H:%M")
+        is_filtered = data.get("is_filtered_flag", False)
+        if not is_filtered:
+            tipo_text = "Clientes, Proveedores y Empleados"
+        elif tipo_contraparte:
+            tipo_text = tipo_contraparte.capitalize()
+        else:
+            tipo_text = "N/D"
 
-        def on_later_pages(cv, doc_obj):
-            _draw_inner(cv, doc_obj, logo_path=logo_path)
+        # ── Callback ──────────────────────────────────────────────────────
+        # El mismo banner de título (logo a la izquierda + "Informe Ejecutivo
+        # de Riesgos" + Empresa/Periodo/Tipo) se aplica en TODAS las páginas.
+        def on_every_page(cv, doc_obj):
+            _draw_title_banner(cv, doc_obj, empresa_nombre=empresa_nombre,
+                               periodo=periodo, tipo_text=tipo_text,
+                               logo_path=logo_path)
 
         pdf_title = f"Reporte-{empresa_nombre.replace(' ', '_')}"
-        # ── Documento ─────────────────────────────────────────────────────
+
+        BANNER_H = 78
+        TOP_MARGIN = BANNER_H + 18   # deja aire debajo del banner cyan
+
+        # ── Documento (una sola plantilla: banner en todas las páginas) ─────
         doc = SimpleDocTemplate(
             output, pagesize=A4,
             leftMargin=40, rightMargin=40,
-            topMargin=50, bottomMargin=38,
+            topMargin=TOP_MARGIN, bottomMargin=38,
             title=pdf_title,
             author="Riesgos 365"
         )
+
         W_content = A4[0] - 80
+
+        footer_style = ParagraphStyle(
+            "FooterInfo", fontName="Helvetica", fontSize=9,
+            textColor=colors.HexColor(C["dark_text"]), leading=12)
 
         def section_header(num, title, col=C["header_bg"]):
             badge = Table(
@@ -1062,33 +1031,43 @@ class PDFRiskReportService:
             return [badge, Spacer(1, 10)]
 
         story = []
-        story.append(PageBreak())  # Página 1 = portada canvas
 
-        # S1: KPI Panel
-        story += section_header("1", "Panel de Estado General: Resumen de Indicadores Estratégicos")
-        story.append(_chart_kpi_panel(total_reg, cruces_count, pct_cruces, riesgo_prom,
-                                      triple_count, sin_dd_total, total_contra))
+        # ── S1: Panel de control general (KPIs estratégicos) ───────────────
+        story += section_header("1", "Panel de control general (KPIs estratégicos)")
+        story.append(_kpi_panel_grid(total_reg, cruces_count, pct_cruces,
+                                     triple_count, sin_dd_total, total_contra))
+        story.append(Spacer(1, 10))
+        story.append(_distribucion_multivinculos(counts))
         story.append(Spacer(1, 16))
 
-        # S2: Distribución relaciones
-        story.append(CondPageBreak(240))
-        # 🟢 MODIFICACIÓN 4: Título principal de la sección modificado
-        story += section_header("2", "Distribución Estratégica de Relaciones Cruzadas - Distribución Multi-vínculos")
-        story.append(_chart_relaciones(counts))
-        story.append(Spacer(1, 16))
+        # ── S2: Avance de debida diligencia ─────────────────────────────────
+        story.append(CondPageBreak(320))
+        story += section_header("2", "Avance de debida diligencia")
 
-        # S3: Pirámide
-        story.append(CondPageBreak(270))
-        story += section_header("3", "Estado de Debida Diligencia y Riesgo Estratégico")
         alto_riesgo_sin_form = stats_dd.get("alto_riesgo_sin_formulario") or 0
         sin_dd_contra_count = len(sin_dd_list)
-        story.append(_chart_piramide(total_contra, sin_dd_contra_count, alto_riesgo_sin_form))
+        n_total_dd = total_contra or sin_dd_contra_count or 1
+
+        n_critico = int(stats_dd.get("formularios_criticos") or alto_riesgo_sin_form or 0)
+        n_cumplido = stats_dd.get("formularios_cumplidos")
+        if n_cumplido is None:
+            n_cumplido = max(n_total_dd - sin_dd_contra_count, 0)
+        n_cumplido = int(n_cumplido)
+        n_pendiente = max(n_total_dd - n_cumplido - n_critico, 0)
+
+        pct_cumplido = (n_cumplido / n_total_dd * 100.0) if n_total_dd else 0.0
+        pct_critico = (n_critico / n_total_dd * 100.0) if n_total_dd else 0.0
+        pct_pendiente = max(100.0 - pct_cumplido - pct_critico, 0.0)
+
+        story.append(_avance_debida_diligencia(
+            pct_cumplido, pct_pendiente, pct_critico,
+            n_cumplido, n_pendiente, n_critico, n_total_dd))
         story.append(Spacer(1, 16))
 
-        # Tabla de Detalles Top 15 anexa a la Pirámide
+        # Tabla de Detalles Top 10 (Contrapartes críticas sin DD)
         if sin_dd_list:
-            is_filtered = data.get("is_filtered_flag", False)
-            titulo_tabla = "Detalle de Contrapartes Filtradas (Top 15):" if is_filtered else "Detalle de Casos Críticos sin Debida Diligencia (Top 15):"
+            titulo_tabla = "Contrapartes críticas sin DD — Detalle de contrapartes filtradas (Top 10):" \
+                if is_filtered else "Contrapartes críticas sin DD — Top 10 por monto de exposición:"
 
             story.append(Paragraph(
                 f"<b>{titulo_tabla}</b>",
@@ -1099,10 +1078,14 @@ class PDFRiskReportService:
                 story.append(t_det)
         story.append(Spacer(1, 16))
 
-        # S4: Plan de acción
-        story.append(CondPageBreak(220))
-        story += section_header("4", "Plan de Acción y Conclusión Ejecutiva")
-        story.append(_chart_plan_accion())
+        # ── S3: Plan de acción de contraparte ────────────────────────────────
+        story.append(PageBreak())
+        story += section_header("3", "Plan de acción de contraparte")
+        story.append(Paragraph(
+            "Formatos de conocimiento de contraparte",
+            ParagraphStyle("PlanSub", fontName="Helvetica", fontSize=8.5,
+                           textColor=colors.HexColor(C["gray"]), spaceAfter=8)))
+        story.append(_plan_accion_cards())
         story.append(Spacer(1, 14))
 
         # 🟢 CONCLUSIÓN
@@ -1121,6 +1104,19 @@ class PDFRiskReportService:
             ("BOTTOMPADDING", (0, 0), (-1, -1), 16),
         ]))
         story.append(concl_box)
+
+        story.append(Spacer(1, 10))
+        footer_box = Table([
+            [Paragraph(f"Fecha de generación: <b>{generated_at}</b>", footer_style),
+             Paragraph(f"Tipo contraparte: <b>{tipo_text}</b>", footer_style)],
+        ], colWidths=[W_content / 2, W_content / 2])
+        footer_box.setStyle(TableStyle([
+            ("TOPPADDING", (0, 0), (-1, -1), 8),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ]))
+        story.append(footer_box)
 
         # 🟢 Observaciones del Oficial de Cumplimiento
         if oficial_conclusion:
@@ -1147,7 +1143,7 @@ class PDFRiskReportService:
             ]))
             story.append(oficial_box)
 
-        doc.build(story, onFirstPage=on_first_page, onLaterPages=on_later_pages)
+        doc.build(story, onFirstPage=on_every_page, onLaterPages=on_every_page)
 
     def _save_to_db(self, company_id: int, file_path: str,
                     pdf_content: Optional[bytes]) -> None:
