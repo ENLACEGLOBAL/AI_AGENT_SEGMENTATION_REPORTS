@@ -184,53 +184,156 @@ def _kpi_card(label, value, sub, value_color, accent_color):
     return card
 
 
-def _kpi_panel_grid(total_reg, cruces_count, pct_cruces, triple_count,
-                    sin_dd_total, total_contra):
-    """Panel de control general (KPIs estratégicos) — grid 2x2 como el dashboard."""
+def _kpi_dd_summary_cards(total_contra, sin_dd_total):
+    """Par de tarjetas: Muestra analizada / Contrapartes sin DD."""
+    pct_sin_dd = (sin_dd_total / total_contra * 100.0) if total_contra else 0.0
 
-    def nivel(val, t1, t2):
-        if val <= t1:
-            return C["teal"]
-        elif val <= t2:
-            return C["orange"]
-        return C["pink"]
+    card1 = _kpi_card(
+        "Muestra analizada",
+        f"{total_contra:,}".replace(",", "."),
+        f"{total_contra:,}".replace(",", ".") + " contrapartes",
+        C["dark_text"], C["header_bg"])
+    card2 = _kpi_card(
+        "Contrapartes sin DD",
+        f"{sin_dd_total:,}".replace(",", "."),
+        f"{pct_sin_dd:.1f}%".replace(".", ",") + " del total",
+        C["pink"], C["pink"])
 
-    pct_muestra = 100.0
-    pct_sin_dd = (sin_dd_total / total_reg * 100.0) if total_reg else 0.0
-
-    cards = [
-        ("Muestra analizada",
-         f"{pct_muestra:.0f}%", f"{total_reg:,}".replace(",", ".") +
-         f" Registros en {total_contra:,}".replace(",", ".") + " contrapartes",
-         C["dark_text"], C["header_bg"]),
-        ("Contrapartes con conflictos\nde interés",
-         f"{pct_cruces:.2f}%".replace(".", ","),
-         f"{cruces_count:,}".replace(",", ".") + " contrapartes",
-         nivel(pct_cruces, 1, 5), nivel(pct_cruces, 1, 5)),
-        ("Casos con triple relación\n(Cliente-proveedor-empleado)",
-         f"{triple_count} caso" + ("" if triple_count == 1 else "s"),
-         f"{cruces_count:,}".replace(",", ".") + " contrapartes",
-         nivel(triple_count, 0, 5), nivel(triple_count, 0, 5)),
-        ("Transacciones de contrapartes\nsin debida diligencia actualizada",
-         f"{pct_sin_dd:.0f}%",
-         f"{sin_dd_total:,}".replace(",", ".") + " transacciones",
-         nivel(pct_sin_dd, 30, 60), nivel(pct_sin_dd, 30, 60)),
-    ]
-
-    built = []
-    for label, val, sub, vcol, acol in cards:
-        built.append(_kpi_card(label.replace("\n", "<br/>"), val, sub, vcol, acol))
-
-    row1 = [built[0], built[1]]
-    row2 = [built[2], built[3]]
-    grid = Table([row1, row2], colWidths=[248, 248], hAlign="LEFT")
-    grid.setStyle(TableStyle([
+    row = Table([[card1, card2]], colWidths=[248, 248], hAlign="LEFT")
+    row.setStyle(TableStyle([
         ("LEFTPADDING", (0, 0), (-1, -1), 4),
         ("RIGHTPADDING", (0, 0), (-1, -1), 4),
         ("TOPPADDING", (0, 0), (-1, -1), 4),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
     ]))
-    return grid
+    return row
+
+
+def _clasificar_contrapartes_por_rol(tabla_detalles):
+    """Clasifica cada contraparte en su combinación exclusiva de roles
+    (cliente/proveedor/empleado) y separa con/sin DD dentro de cada una."""
+
+    def count_val(d):
+        d = d or {}
+        return int(d.get("count", 0) or d.get("cantidad", 0) or 0)
+
+    buckets = {}
+    for e in tabla_detalles or []:
+        roles = []
+        if count_val(e.get("cliente")) > 0:
+            roles.append("cliente")
+        if count_val(e.get("proveedor")) > 0:
+            roles.append("proveedor")
+        if count_val(e.get("empleado")) > 0:
+            roles.append("empleado")
+        if not roles:
+            continue
+
+        key = tuple(roles)
+        dd = e.get("dd", False) or e.get("tiene_formulario", False)
+        b = buckets.setdefault(key, {"con_dd": 0, "sin_dd": 0})
+        if dd:
+            b["con_dd"] += 1
+        else:
+            b["sin_dd"] += 1
+
+    etiquetas = [
+        (("cliente",), "Clientes"),
+        (("proveedor",), "Proveedores"),
+        (("empleado",), "Empleados"),
+        (("cliente", "proveedor"), "Cliente + Proveedor"),
+        (("cliente", "proveedor", "empleado"), "Cliente + Proveedor + Empleado"),
+        (("proveedor", "empleado"), "Proveedor + Empleado"),
+        (("cliente", "empleado"), "Cliente + Empleado"),
+    ]
+
+    filas = []
+    for key, label in etiquetas:
+        b = buckets.get(key)
+        es_triple = key == ("cliente", "proveedor", "empleado")
+        if b is None:
+            if es_triple:
+                filas.append((label, 0, 0, 0))
+            continue
+        con_dd, sin_dd = b["con_dd"], b["sin_dd"]
+        total = con_dd + sin_dd
+        if total == 0 and not es_triple:
+            continue
+        filas.append((label, con_dd, sin_dd, total))
+    return filas
+
+
+def _tabla_contrapartes_sin_dd(filas):
+    """Tabla Rol | Con DD | SIN DD | Total, con fila TOTAL al final."""
+    title_style = ParagraphStyle("TRD_T", fontName="Helvetica-Bold", fontSize=10.5,
+                                 textColor=colors.HexColor(C["dark_text"]), spaceAfter=8)
+    hdr_style = ParagraphStyle("TRD_H", fontName="Helvetica-Bold", fontSize=9,
+                               textColor=colors.white, alignment=TA_CENTER)
+    label_style = ParagraphStyle("TRD_L", fontName="Helvetica-Bold", fontSize=9,
+                                 textColor=colors.HexColor(C["dark_text"]))
+    val_style = ParagraphStyle("TRD_V", fontName="Helvetica", fontSize=9,
+                               textColor=colors.HexColor(C["dark_text"]), alignment=TA_CENTER)
+    sin_dd_style = ParagraphStyle("TRD_S", fontName="Helvetica-Bold", fontSize=9,
+                                  textColor=colors.HexColor(C["pink"]), alignment=TA_CENTER)
+    total_label_style = ParagraphStyle("TRD_TL", fontName="Helvetica-Bold", fontSize=9,
+                                       textColor=colors.HexColor(C["dark_text"]))
+    total_val_style = ParagraphStyle("TRD_TV", fontName="Helvetica-Bold", fontSize=9,
+                                     textColor=colors.HexColor(C["dark_text"]), alignment=TA_CENTER)
+
+    def fnum(n):
+        return f"{n:,}".replace(",", ".") if n else "-"
+
+    rows = [[
+        Paragraph("Rol", hdr_style),
+        Paragraph("Con DD", hdr_style),
+        Paragraph("SIN DD", hdr_style),
+        Paragraph("Total", hdr_style),
+    ]]
+
+    tot_con_dd = tot_sin_dd = tot_total = 0
+    for label, con_dd, sin_dd, total in filas:
+        tot_con_dd += con_dd
+        tot_sin_dd += sin_dd
+        tot_total += total
+        rows.append([
+            Paragraph(label, label_style),
+            Paragraph(fnum(con_dd), val_style),
+            Paragraph(fnum(sin_dd), sin_dd_style),
+            Paragraph(fnum(total), val_style),
+        ])
+
+    rows.append([
+        Paragraph("TOTAL", total_label_style),
+        Paragraph(fnum(tot_con_dd), total_val_style),
+        Paragraph(fnum(tot_sin_dd), total_val_style),
+        Paragraph(fnum(tot_total), total_val_style),
+    ])
+
+    t = Table(rows, colWidths=[190, 90, 90, 90])
+    t.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(C["header_bg"])),
+        ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LINEABOVE", (0, -1), (-1, -1), 1.2, colors.HexColor(C["header_bg"])),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#F8FAFC")]),
+    ]))
+
+    wrapper = Table([
+        [Paragraph("Contrapartes sin Debida Diligencia", title_style)],
+        [t],
+    ], colWidths=[460])
+    wrapper.setStyle(TableStyle([
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+    ]))
+    return wrapper
 
 
 # ══════════════════════════════════════════════════════════════
@@ -1032,10 +1135,13 @@ class PDFRiskReportService:
 
         story = []
 
-        # ── S1: Panel de control general (KPIs estratégicos) ───────────────
-        story += section_header("1", "Panel de control general (KPIs estratégicos)")
-        story.append(_kpi_panel_grid(total_reg, cruces_count, pct_cruces,
-                                     triple_count, sin_dd_total, total_contra))
+        # ── S1: Contrapartes sin Debida Diligencia ──────────────────────────
+        story += section_header("1", "Contrapartes sin Debida Diligencia")
+        sin_dd_contra_count_s1 = len(sin_dd_list)
+        story.append(_kpi_dd_summary_cards(total_contra, sin_dd_contra_count_s1))
+        story.append(Spacer(1, 10))
+        filas_rol_dd = _clasificar_contrapartes_por_rol(data.get("tabla_detalles", []))
+        story.append(_tabla_contrapartes_sin_dd(filas_rol_dd))
         story.append(Spacer(1, 10))
         story.append(_distribucion_multivinculos(counts))
         story.append(Spacer(1, 16))
@@ -1147,7 +1253,7 @@ class PDFRiskReportService:
 
     def _save_to_db(self, company_id: int, file_path: str,
                     pdf_content: Optional[bytes]) -> None:
-        db = TargetSessionLocal()
+        db = SourceSessionLocal()
         try:
             db_report = GeneratedReport(
                 file_path=file_path,
