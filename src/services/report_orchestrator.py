@@ -11,7 +11,7 @@ from src.services.local_ai_report_service import generate_html_report
 from src.services.local_ai_report_service import local_ai_report_service
 from src.db.repositories.generated_report_repo import GeneratedReportRepository
 from src.db.repositories.html_report_repo import HtmlReportRepository
-from src.db.base import TargetSessionLocal
+from src.db.base import TargetSessionLocal, SourceSessionLocal
 from src.services.s3_service import s3_service
 
 
@@ -33,7 +33,7 @@ class ReportOrchestrator:
             validez_dd: int = 1
     ) -> Dict[str, Any]:
 
-        tgt = TargetSessionLocal()
+        tgt = SourceSessionLocal()
         analytics_data = None
 
         # Validamos si Laravel envió filtros reales para saber si guardar o no el reporte oficial
