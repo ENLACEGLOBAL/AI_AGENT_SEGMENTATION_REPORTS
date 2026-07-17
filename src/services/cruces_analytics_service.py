@@ -19,7 +19,7 @@ from src.analytics_modules.cruces_entidades.cruces_graph_generator import Cruces
 # from src.db.models.proveedor import Proveedor
 # from src.db.models.empleado import Empleado
 from src.db.repositories.cruces_entidades_analytics_repo import CrucesEntidadesAnalyticsRepository
-from src.db.base import SourceSessionLocal
+from src.db.base import SourceSessionLocal, TargetSessionLocal
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from src.core.config2 import settings as form_settings

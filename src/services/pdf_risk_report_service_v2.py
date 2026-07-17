@@ -668,7 +668,7 @@ class PDFRiskReportService:
 
         try:
             # 🟢 CORRECCIÓN: Cambiar TARGET por SOURCE para conectar a dbeg365
-            url = form_settings.SOURCE_DATABASE_URL
+            url = form_settings.TARGET_DATABASE_URL
             if "mysql+mysqlconnector" not in url and url.startswith("mysql://"):
                 url = url.replace("mysql://", "mysql+pymysql://")
 
