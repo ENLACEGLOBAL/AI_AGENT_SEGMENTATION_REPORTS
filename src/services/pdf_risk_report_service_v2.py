@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import copy
 import math
 import numpy as np
 from datetime import datetime
@@ -871,7 +872,7 @@ class PDFRiskReportService:
                     "message": f"Error generando PDF: {e.__class__.__name__}: {e}"}
 
     def _apply_pdf_filters(self, data: Dict[str, Any], filters: Dict[str, Any]) -> Dict[str, Any]:
-        import copy
+
         fd = copy.deepcopy(data)
 
         def clean_monto(val):
@@ -890,6 +891,7 @@ class PDFRiskReportService:
 
         sin_dd_only = str(filters.get("sin_dd", "")).lower() in ['true', '1', 'yes']
         cruces_only = str(filters.get("con_cruces", "")).lower() in ['true', '1', 'yes']
+        relacion = str(filters.get("relacion", "all")).lower()
 
         def is_in_range(d_str):
             if not d_str or str(d_str).strip().lower() in ['n/a', 'nan', '—', 'none', '']: return False
@@ -897,6 +899,15 @@ class PDFRiskReportService:
             if f_desde and d < f_desde: return False
             if f_hasta and d > f_hasta: return False
             return True
+
+        # Función auxiliar para vaciar la data de un rol no solicitado
+        def anular_rol(r_data):
+            if isinstance(r_data, dict):
+                r_data["transacciones_detalles"] = []
+                r_data["count"] = 0
+                r_data["cantidad"] = 0
+                r_data["amount"] = 0.0
+                r_data["suma"] = 0.0
 
         original_list = fd.get("tabla_detalles", [])
         filtered_list = []
@@ -947,7 +958,33 @@ class PDFRiskReportService:
             if (f_desde or f_hasta or m_min_tx > 0) and total_tx_row == 0:
                 continue
 
+            # 🟢 LÓGICA DE JERARQUÍA EXCLUSIVA DE OMAR
+            if relacion == 'cliente':
+                if c_count == 0:
+                    continue
+                if not cruces_only:
+                    anular_rol(p_data)
+                    anular_rol(emp_data)
+                    p_count = emp_count = 0
+            elif relacion == 'proveedor':
+                if p_count == 0:
+                    continue
+                if not cruces_only:
+                    anular_rol(c_data)
+                    anular_rol(emp_data)
+                    c_count = emp_count = 0
+            elif relacion == 'empleado':
+                if emp_count == 0:
+                    continue
+                if not cruces_only:
+                    anular_rol(c_data)
+                    anular_rol(p_data)
+                    c_count = p_count = 0
+
+            # Recalculamos cuántos cruces reales quedaron después de aplicar la jerarquía
             cruces_actuales = sum(1 for c in [c_count, p_count, emp_count] if c > 0)
+
+            # Si el usuario pidió explícitamente "Con cruces" y la entidad no tiene al menos 2 roles, se descarta
             if cruces_only and cruces_actuales < 2:
                 continue
 
@@ -965,10 +1002,10 @@ class PDFRiskReportService:
                     continue
 
             filtered_list.append(e)
-            agg_total_tx += total_tx_row
+            agg_total_tx += (c_count + p_count + emp_count)
 
             if not dd:
-                agg_sin_dd += total_tx_row
+                agg_sin_dd += (c_count + p_count + emp_count)
                 r_max = str(e.get("riesgo_maximo", 0)).lower()
                 try:
                     if float(r_max) >= 4.0: alto_riesgo_sin_form += 1
@@ -988,39 +1025,53 @@ class PDFRiskReportService:
             except (ValueError, TypeError):
                 pass
 
-        lista_top = [e for e in filtered_list]
+                lista_sin_dd = [e for e in filtered_list if
+                                not (e.get("dd", False) or e.get("tiene_formulario", False))]
 
-        def get_total_recalculado(x):
-            c = clean_monto(x.get("cliente", {}).get("amount", 0) or x.get("cliente", {}).get("suma", 0))
-            p = clean_monto(x.get("proveedor", {}).get("amount", 0) or x.get("proveedor", {}).get("suma", 0))
-            e_val = clean_monto(x.get("empleado", {}).get("amount", 0) or x.get("empleado", {}).get("suma", 0))
-            return abs(c + p + e_val)
+                def get_total_recalculado(x):
+                    c = clean_monto(x.get("cliente", {}).get("amount", 0) or x.get("cliente", {}).get("suma", 0))
+                    p = clean_monto(x.get("proveedor", {}).get("amount", 0) or x.get("proveedor", {}).get("suma", 0))
+                    e_val = clean_monto(x.get("empleado", {}).get("amount", 0) or x.get("empleado", {}).get("suma", 0))
+                    return abs(c + p + e_val)
 
-        lista_top.sort(key=get_total_recalculado, reverse=True)
+                # Ordenar por monto las que NO tienen DD
+                lista_sin_dd.sort(key=get_total_recalculado, reverse=True)
 
-        fd["tabla_detalles"] = filtered_list
-        fd["transacciones_sin_dd"] = lista_top
+                fd["tabla_detalles"] = filtered_list
+                fd["transacciones_sin_dd"] = lista_sin_dd  # <--- Ahora solo viajan las que realmente NO tienen DD
 
-        total_entities = len(filtered_list)
-        fd["total_transacciones"] = agg_total_tx
-        fd["transacciones_sin_dd_total"] = agg_sin_dd
+                total_entities = len(filtered_list)
+                fd["total_transacciones"] = agg_total_tx
+                fd["transacciones_sin_dd_total"] = agg_sin_dd
 
-        if "kpis" not in fd: fd["kpis"] = {}
-        fd["kpis"]["total_registros"] = total_entities
-        fd["kpis"]["entidades_cruces"] = agg_con_cruces
-        fd["kpis"]["porcentaje_cruces"] = (agg_con_cruces / total_entities * 100) if total_entities > 0 else 0.0
-        fd["kpis"]["riesgo_promedio"] = (sum_riesgo / total_entities) if total_entities > 0 else 0.0
+                if "kpis" not in fd: fd["kpis"] = {}
+                fd["kpis"]["total_registros"] = total_entities
+                fd["kpis"]["entidades_cruces"] = agg_con_cruces
+                fd["kpis"]["porcentaje_cruces"] = (agg_con_cruces / total_entities * 100) if total_entities > 0 else 0.0
+                fd["kpis"]["riesgo_promedio"] = (sum_riesgo / total_entities) if total_entities > 0 else 0.0
 
-        if "tipos_cruces" not in fd: fd["tipos_cruces"] = {}
-        fd["tipos_cruces"]["triple_cruce"] = agg_triple
-        fd["tipos_cruces"]["cliente_proveedor"] = agg_c_p
-        fd["tipos_cruces"]["proveedor_empleado"] = agg_p_e
-        fd["tipos_cruces"]["cliente_empleado"] = agg_c_e
+                if "tipos_cruces" not in fd: fd["tipos_cruces"] = {}
+                fd["tipos_cruces"]["triple_cruce"] = agg_triple
+                fd["tipos_cruces"]["cliente_proveedor"] = agg_c_p
+                fd["tipos_cruces"]["proveedor_empleado"] = agg_p_e
+                fd["tipos_cruces"]["cliente_empleado"] = agg_c_e
 
-        if "estadisticas_formularios" not in fd: fd["estadisticas_formularios"] = {}
-        fd["estadisticas_formularios"]["alto_riesgo_sin_formulario"] = alto_riesgo_sin_form
+                # 🟢 CORRECCIÓN OMAR: Calcular con la longitud real de los que NO tienen DD
+                entidades_sin_dd_count = len(lista_sin_dd)
+                entidades_con_dd = total_entities - entidades_sin_dd_count
 
-        return fd
+                if "estadisticas_formularios" not in fd: fd["estadisticas_formularios"] = {}
+                fd["estadisticas_formularios"]["alto_riesgo_sin_formulario"] = alto_riesgo_sin_form
+                fd["estadisticas_formularios"]["formularios_criticos"] = alto_riesgo_sin_form
+                fd["estadisticas_formularios"]["formularios_cumplidos"] = entidades_con_dd
+
+                if total_entities > 0:
+                    fd["estadisticas_formularios"]["porcentaje_completado"] = (
+                                                                                      entidades_con_dd / total_entities) * 100.0
+                else:
+                    fd["estadisticas_formularios"]["porcentaje_completado"] = 0.0
+
+                return fd
 
     def _find_logo(self) -> Optional[str]:
         candidates = [
@@ -1103,7 +1154,7 @@ class PDFRiskReportService:
         pdf_title = f"Reporte-{empresa_nombre.replace(' ', '_')}"
 
         BANNER_H = 78
-        TOP_MARGIN = BANNER_H + 18   # deja aire debajo del banner cyan
+        TOP_MARGIN = BANNER_H + 18  # deja aire debajo del banner cyan
 
         # ── Documento (una sola plantilla: banner en todas las páginas) ─────
         doc = SimpleDocTemplate(

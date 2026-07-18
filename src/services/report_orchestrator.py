@@ -30,7 +30,8 @@ class ReportOrchestrator:
             tipo_contraparte: str = "Universo General",
             company_name: Optional[str] = None,
             output_path: Optional[str] = None,
-            validez_dd: int = 1
+            validez_dd: int = 1,
+            email_to: Optional[str] = None
     ) -> Dict[str, Any]:
 
         tgt = SourceSessionLocal()
@@ -103,7 +104,9 @@ class ReportOrchestrator:
             "sin_dd": "true" if (
                         filtros_pdf and str(filtros_pdf.get("sin_dd", "")).lower() in ["true", "1"]) else "false",
             "con_cruces": "true" if (
-                        filtros_pdf and str(filtros_pdf.get("con_cruces", "")).lower() in ["true", "1"]) else "false"
+                        filtros_pdf and str(filtros_pdf.get("con_cruces", "")).lower() in ["true", "1"]) else "false",
+            # 🟢 NUEVO: Inyectamos la relación que viene desde Laravel
+            "relacion": str(filtros_pdf.get("relacion", "all")).lower() if filtros_pdf else "all"
         }
 
         # --- GENERACIÓN DEL PDF ---
@@ -112,7 +115,8 @@ class ReportOrchestrator:
             tipo_contraparte=tipo_contraparte,
             filtros_pdf=filtros_normalizados,
             oficial_conclusion=oficial_conclusion,
-            output_path=output_path
+            output_path=output_path,
+            email_to=email_to
         )
 
         if pdf.get("status") == "success" and not hay_filtros:
@@ -123,9 +127,6 @@ class ReportOrchestrator:
             except Exception as e:
                 print(f"⚠️ Error registrando reporte en DB: {e}")
 
-            # 🟢 CORRECCIÓN MAGISTRAL: Eliminamos "analytics_data" de la respuesta.
-            # Al enviar solo la URL del PDF, la respuesta pasa de pesar 100 MB a pesar 200 Bytes.
-            # PHP lo leerá en 1 milisegundo, no se quedará sin RAM, y ejecutará la redirección a S3.
         return {
             "status": "success",
             "pdf": pdf
@@ -144,7 +145,6 @@ class ReportOrchestrator:
         src = SourceSessionLocal()
         analytics_data = None
 
-        # 🟢 LIMPIEZA DE FILTROS (Por si llegan desde la URL del Dashboard)
         if fecha == "": fecha = None
         if monto_min == "": monto_min = None
 
@@ -172,7 +172,6 @@ class ReportOrchestrator:
             if not analytics_data:
                 print(f"⚙️ Dashboard: Generando analítica desde DB para {empresa_id} con validez DD: {validez_dd} años")
 
-                # 🟢 PASAMOS validez_dd AL SERVICIO
                 cruces_result = cruces_analytics_service.generate_cruces_analytics(
                     src, empresa_id, fecha=fecha, monto_min=monto_min, validez_dd=validez_dd
                 )
