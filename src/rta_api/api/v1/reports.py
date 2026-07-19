@@ -17,15 +17,16 @@ def get_db():
         db.close()
 
 
-# 🟢 Modelo actualizado para soportar filtros complejos y comentarios
+# 🟢 Modelo actualizado para soportar filtros complejos, comentarios y ENVÍO DE CORREO
 class PdfRequest(BaseModel):
     empresa_id: int
     tipo_contraparte: str = "Universo General"
-    filtros_pdf: Optional[Dict] = None  # Aquí vendrán fecha_desde, monto_min, etc.
+    filtros_pdf: Optional[Dict] = None
     oficial_conclusion: Optional[str] = None
     refresh_data: bool = False
     empresa_nombre: Optional[str] = None
     validez_dd: int = 1
+    email_to: Optional[str] = None
 
 
 @router.post("/pdf")
@@ -69,7 +70,8 @@ def generate_pdf_from_request(
         refresh_data=payload.refresh_data,
         tipo_contraparte=payload.tipo_contraparte,
         company_name=payload.empresa_nombre,
-        validez_dd=payload.validez_dd
+        validez_dd=payload.validez_dd,
+        email_to=payload.email_to  # <--- 2. ENTREGAMOS EL CORREO AL ORQUESTADOR
     )
 
     # Manejo de error si el orquestador falla
