@@ -773,13 +773,15 @@ class PDFRiskReportService:
 
             is_filtered = False
             if filtros_pdf:
+                relacion_val = str(filtros_pdf.get("relacion", "all")).lower()
                 is_filtered = any([
                     filtros_pdf.get("fecha_desde"),
                     filtros_pdf.get("fecha_hasta"),
                     float(filtros_pdf.get("monto_min", 0) or 0) > 0,
                     float(filtros_pdf.get("monto_min_tx", 0) or 0) > 0,
                     str(filtros_pdf.get("sin_dd", "")).lower() in ['true', '1', 'yes'],
-                    str(filtros_pdf.get("con_cruces", "")).lower() in ['true', '1', 'yes']
+                    str(filtros_pdf.get("con_cruces", "")).lower() in ['true', '1', 'yes'],
+                    relacion_val != "all"
                 ])
 
             analytics["is_filtered_flag"] = is_filtered
@@ -873,6 +875,10 @@ class PDFRiskReportService:
 
     def _apply_pdf_filters(self, data: Dict[str, Any], filters: Dict[str, Any]) -> Dict[str, Any]:
 
+        # 1. Asegurarnos de que no rompa si data viene nulo
+        if not data:
+            data = {}
+
         fd = copy.deepcopy(data)
 
         def clean_monto(val):
@@ -900,7 +906,6 @@ class PDFRiskReportService:
             if f_hasta and d > f_hasta: return False
             return True
 
-        # Función auxiliar para vaciar la data de un rol no solicitado
         def anular_rol(r_data):
             if isinstance(r_data, dict):
                 r_data["transacciones_detalles"] = []
@@ -958,7 +963,6 @@ class PDFRiskReportService:
             if (f_desde or f_hasta or m_min_tx > 0) and total_tx_row == 0:
                 continue
 
-            # 🟢 LÓGICA DE JERARQUÍA EXCLUSIVA DE OMAR
             if relacion == 'cliente':
                 if c_count == 0:
                     continue
@@ -981,10 +985,8 @@ class PDFRiskReportService:
                     anular_rol(p_data)
                     c_count = p_count = 0
 
-            # Recalculamos cuántos cruces reales quedaron después de aplicar la jerarquía
             cruces_actuales = sum(1 for c in [c_count, p_count, emp_count] if c > 0)
 
-            # Si el usuario pidió explícitamente "Con cruces" y la entidad no tiene al menos 2 roles, se descarta
             if cruces_only and cruces_actuales < 2:
                 continue
 
@@ -1020,11 +1022,13 @@ class PDFRiskReportService:
             if c_count > 0 and p_count > 0: agg_c_p += 1
             if p_count > 0 and emp_count > 0: agg_p_e += 1
             if c_count > 0 and emp_count > 0: agg_c_e += 1
+
             try:
                 sum_riesgo += float(e.get("riesgo_maximo", 0))
             except (ValueError, TypeError):
                 pass
 
+        # 🟢 CORRECCIÓN MAGISTRAL: Todo lo siguiente FUERA del ciclo for
         lista_sin_dd = [e for e in filtered_list if
                         not (e.get("dd", False) or e.get("tiene_formulario", False))]
 
@@ -1034,11 +1038,10 @@ class PDFRiskReportService:
             e_val = clean_monto(x.get("empleado", {}).get("amount", 0) or x.get("empleado", {}).get("suma", 0))
             return abs(c + p + e_val)
 
-        # Ordenar por monto las que NO tienen DD
         lista_sin_dd.sort(key=get_total_recalculado, reverse=True)
 
         fd["tabla_detalles"] = filtered_list
-        fd["transacciones_sin_dd"] = lista_sin_dd  # <--- Ahora solo viajan las que realmente NO tienen DD
+        fd["transacciones_sin_dd"] = lista_sin_dd
 
         total_entities = len(filtered_list)
         fd["total_transacciones"] = agg_total_tx
@@ -1056,7 +1059,6 @@ class PDFRiskReportService:
         fd["tipos_cruces"]["proveedor_empleado"] = agg_p_e
         fd["tipos_cruces"]["cliente_empleado"] = agg_c_e
 
-        # 🟢 CORRECCIÓN OMAR: Calcular con la longitud real de los que NO tienen DD
         entidades_sin_dd_count = len(lista_sin_dd)
         entidades_con_dd = total_entities - entidades_sin_dd_count
 
@@ -1066,11 +1068,11 @@ class PDFRiskReportService:
         fd["estadisticas_formularios"]["formularios_cumplidos"] = entidades_con_dd
 
         if total_entities > 0:
-            fd["estadisticas_formularios"]["porcentaje_completado"] = (
-                                                                              entidades_con_dd / total_entities) * 100.0
+            fd["estadisticas_formularios"]["porcentaje_completado"] = (entidades_con_dd / total_entities) * 100.0
         else:
             fd["estadisticas_formularios"]["porcentaje_completado"] = 0.0
 
+        # 🟢 MUY IMPORTANTE: Retornamos el diccionario completo, NUNCA nulo
         return fd
 
     def _find_logo(self) -> Optional[str]:

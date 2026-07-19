@@ -94,6 +94,7 @@ class ReportOrchestrator:
 
         finally:
             tgt.close()
+        relacion_filtro = str(filtros_pdf.get("relacion", "all")).lower() if filtros_pdf else "all"
 
         # 🟢 NORMALIZACIÓN PARA EL SCRIPT DE PDF (Mantener compatibilidad)
         filtros_normalizados = {
@@ -106,13 +107,14 @@ class ReportOrchestrator:
             "con_cruces": "true" if (
                         filtros_pdf and str(filtros_pdf.get("con_cruces", "")).lower() in ["true", "1"]) else "false",
             # 🟢 NUEVO: Inyectamos la relación que viene desde Laravel
-            "relacion": str(filtros_pdf.get("relacion", "all")).lower() if filtros_pdf else "all"
+            "relacion": relacion_filtro
         }
+        tipo_dinamico = "Universo General" if relacion_filtro == "all" else relacion_filtro.capitalize()
 
         # --- GENERACIÓN DEL PDF ---
         pdf = pdf_risk_report_service.generate_pdf_report(
             analytics_data=analytics_data,
-            tipo_contraparte=tipo_contraparte,
+            tipo_contraparte=tipo_dinamico,  # 🟢 Pasamos el texto correcto al PDF
             filtros_pdf=filtros_normalizados,
             oficial_conclusion=oficial_conclusion,
             output_path=output_path,
