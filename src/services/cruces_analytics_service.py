@@ -99,7 +99,7 @@ class CrucesAnalyticsService:
         try:
             # 🟢 FIX: Calculamos los días dinámicamente según la selección (1 o 2 años)
             dias_maximos = 730 if validez_dd == 2 else 365
-            print(f"   📋 Buscando Formularios DD con vigencia de hasta {dias_maximos} días...")
+            print(f"   📋 Buscando Formularios DD con vxigencia de hasta {dias_maximos} días...")
 
             base_sql = f"""
                                         SELECT 

@@ -1025,53 +1025,53 @@ class PDFRiskReportService:
             except (ValueError, TypeError):
                 pass
 
-                lista_sin_dd = [e for e in filtered_list if
-                                not (e.get("dd", False) or e.get("tiene_formulario", False))]
+        lista_sin_dd = [e for e in filtered_list if
+                        not (e.get("dd", False) or e.get("tiene_formulario", False))]
 
-                def get_total_recalculado(x):
-                    c = clean_monto(x.get("cliente", {}).get("amount", 0) or x.get("cliente", {}).get("suma", 0))
-                    p = clean_monto(x.get("proveedor", {}).get("amount", 0) or x.get("proveedor", {}).get("suma", 0))
-                    e_val = clean_monto(x.get("empleado", {}).get("amount", 0) or x.get("empleado", {}).get("suma", 0))
-                    return abs(c + p + e_val)
+        def get_total_recalculado(x):
+            c = clean_monto(x.get("cliente", {}).get("amount", 0) or x.get("cliente", {}).get("suma", 0))
+            p = clean_monto(x.get("proveedor", {}).get("amount", 0) or x.get("proveedor", {}).get("suma", 0))
+            e_val = clean_monto(x.get("empleado", {}).get("amount", 0) or x.get("empleado", {}).get("suma", 0))
+            return abs(c + p + e_val)
 
-                # Ordenar por monto las que NO tienen DD
-                lista_sin_dd.sort(key=get_total_recalculado, reverse=True)
+        # Ordenar por monto las que NO tienen DD
+        lista_sin_dd.sort(key=get_total_recalculado, reverse=True)
 
-                fd["tabla_detalles"] = filtered_list
-                fd["transacciones_sin_dd"] = lista_sin_dd  # <--- Ahora solo viajan las que realmente NO tienen DD
+        fd["tabla_detalles"] = filtered_list
+        fd["transacciones_sin_dd"] = lista_sin_dd  # <--- Ahora solo viajan las que realmente NO tienen DD
 
-                total_entities = len(filtered_list)
-                fd["total_transacciones"] = agg_total_tx
-                fd["transacciones_sin_dd_total"] = agg_sin_dd
+        total_entities = len(filtered_list)
+        fd["total_transacciones"] = agg_total_tx
+        fd["transacciones_sin_dd_total"] = agg_sin_dd
 
-                if "kpis" not in fd: fd["kpis"] = {}
-                fd["kpis"]["total_registros"] = total_entities
-                fd["kpis"]["entidades_cruces"] = agg_con_cruces
-                fd["kpis"]["porcentaje_cruces"] = (agg_con_cruces / total_entities * 100) if total_entities > 0 else 0.0
-                fd["kpis"]["riesgo_promedio"] = (sum_riesgo / total_entities) if total_entities > 0 else 0.0
+        if "kpis" not in fd: fd["kpis"] = {}
+        fd["kpis"]["total_registros"] = total_entities
+        fd["kpis"]["entidades_cruces"] = agg_con_cruces
+        fd["kpis"]["porcentaje_cruces"] = (agg_con_cruces / total_entities * 100) if total_entities > 0 else 0.0
+        fd["kpis"]["riesgo_promedio"] = (sum_riesgo / total_entities) if total_entities > 0 else 0.0
 
-                if "tipos_cruces" not in fd: fd["tipos_cruces"] = {}
-                fd["tipos_cruces"]["triple_cruce"] = agg_triple
-                fd["tipos_cruces"]["cliente_proveedor"] = agg_c_p
-                fd["tipos_cruces"]["proveedor_empleado"] = agg_p_e
-                fd["tipos_cruces"]["cliente_empleado"] = agg_c_e
+        if "tipos_cruces" not in fd: fd["tipos_cruces"] = {}
+        fd["tipos_cruces"]["triple_cruce"] = agg_triple
+        fd["tipos_cruces"]["cliente_proveedor"] = agg_c_p
+        fd["tipos_cruces"]["proveedor_empleado"] = agg_p_e
+        fd["tipos_cruces"]["cliente_empleado"] = agg_c_e
 
-                # 🟢 CORRECCIÓN OMAR: Calcular con la longitud real de los que NO tienen DD
-                entidades_sin_dd_count = len(lista_sin_dd)
-                entidades_con_dd = total_entities - entidades_sin_dd_count
+        # 🟢 CORRECCIÓN OMAR: Calcular con la longitud real de los que NO tienen DD
+        entidades_sin_dd_count = len(lista_sin_dd)
+        entidades_con_dd = total_entities - entidades_sin_dd_count
 
-                if "estadisticas_formularios" not in fd: fd["estadisticas_formularios"] = {}
-                fd["estadisticas_formularios"]["alto_riesgo_sin_formulario"] = alto_riesgo_sin_form
-                fd["estadisticas_formularios"]["formularios_criticos"] = alto_riesgo_sin_form
-                fd["estadisticas_formularios"]["formularios_cumplidos"] = entidades_con_dd
+        if "estadisticas_formularios" not in fd: fd["estadisticas_formularios"] = {}
+        fd["estadisticas_formularios"]["alto_riesgo_sin_formulario"] = alto_riesgo_sin_form
+        fd["estadisticas_formularios"]["formularios_criticos"] = alto_riesgo_sin_form
+        fd["estadisticas_formularios"]["formularios_cumplidos"] = entidades_con_dd
 
-                if total_entities > 0:
-                    fd["estadisticas_formularios"]["porcentaje_completado"] = (
-                                                                                      entidades_con_dd / total_entities) * 100.0
-                else:
-                    fd["estadisticas_formularios"]["porcentaje_completado"] = 0.0
+        if total_entities > 0:
+            fd["estadisticas_formularios"]["porcentaje_completado"] = (
+                                                                              entidades_con_dd / total_entities) * 100.0
+        else:
+            fd["estadisticas_formularios"]["porcentaje_completado"] = 0.0
 
-                return fd
+        return fd
 
     def _find_logo(self) -> Optional[str]:
         candidates = [
