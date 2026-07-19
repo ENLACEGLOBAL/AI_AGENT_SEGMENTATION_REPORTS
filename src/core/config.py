@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     MAILGUN_SMTP_PORT: int = 587
     MAILGUN_SMTP_LOGIN: str = ""
     MAILGUN_SMTP_PASSWORD: str = ""
-    MAIL_FROM: str = "Auditoría Riesgos 365 <reportes@tudominio.com>"
+    MAIL_FROM: str = "Riesgos365 <no-reply@riesgos365.com>"
 
     # ☁️ --- AWS S3 ---
     AWS_SRC_ACCESS_KEY_ID: str = ""
