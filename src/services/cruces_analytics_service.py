@@ -56,7 +56,8 @@ class CrucesAnalyticsService:
             db: Session,
             empresa_id: Optional[int] = None,
             forms_url: Optional[str] = None,
-            validez_dd: int = 1
+            validez_dd: int = 1,
+            ignore_vigencia: bool = False
     ) -> pd.DataFrame:
         """
         Carga formularios desde la BD de formularios (base2) con auto-detección de tabla/columnas.
@@ -99,17 +100,23 @@ class CrucesAnalyticsService:
         try:
             # 🟢 FIX: Calculamos los días dinámicamente según la selección (1 o 2 años)
             dias_maximos = 730 if validez_dd == 2 else 365
-            print(f"   📋 Buscando Formularios DD con vxigencia de hasta {dias_maximos} días...")
+            if ignore_vigencia:
+                # Historial COMPLETO sin filtrar por vigencia respecto a hoy: se usa
+                # únicamente para calcular si una transacción puntual cayó dentro de
+                # la ventana de vigencia del formulario EN SU PROPIA FECHA (no en la de hoy).
+                print("   📋 Buscando historial COMPLETO de Formularios DD (sin límite de vigencia respecto a hoy)...")
+            else:
+                print(f"   📋 Buscando Formularios DD con vigencia de hasta {dias_maximos} días...")
 
             base_sql = f"""
-                                        SELECT 
-                                            id_empresa, 
-                                            numero_id, 
-                                            fecha_registro, 
-                                            nombre_completo 
+                                        SELECT
+                                            id_empresa,
+                                            numero_id,
+                                            fecha_registro,
+                                            nombre_completo
                                         FROM vista_info_forms_completo_new2
-                                        WHERE anulado = 0 
-                                          AND dias_transcurridos <= {dias_maximos}
+                                        WHERE anulado = 0
+                                          {"" if ignore_vigencia else f"AND dias_transcurridos <= {dias_maximos}"}
                                     """
             params = {}
             if empresa_id:
@@ -351,6 +358,14 @@ class CrucesAnalyticsService:
             print(f"📋 Cargando formularios desde la BD...")
             df_formularios = self._load_formularios_from_db(db, empresa_id, forms_url=forms_url, validez_dd=validez_dd)
 
+            # Historial completo de formularios (sin filtrar por vigencia respecto a HOY).
+            # Se usa solo para poder indicar si una transacción concreta ocurrió
+            # dentro de una ventana de DD vigente EN SU PROPIA FECHA, sin alterar
+            # la clasificación "tiene/no tiene DD" que ya usa df_formularios.
+            df_formularios_historial = self._load_formularios_from_db(
+                db, empresa_id, forms_url=forms_url, validez_dd=validez_dd, ignore_vigencia=True
+            )
+
             # 2. Procesar con CrucesAnalytics
             print("🔄 Procesando cruces de entidades...")
             analytics = CrucesAnalytics(df_clientes=df_clientes, df_proveedores=df_proveedores,
@@ -418,6 +433,55 @@ class CrucesAnalyticsService:
                             if base:
                                 forms_set.add((eid, base))
 
+            # 🟢 Mapa de historial COMPLETO de formularios DD por contraparte, para poder
+            # determinar si una transacción puntual ocurrió dentro de una ventana de DD
+            # vigente EN SU PROPIA FECHA (independiente de si ese formulario ya expiró hoy).
+            dias_maximos_dd = 730 if validez_dd == 2 else 365
+            forms_history_map: Dict[tuple, list] = {}
+            if df_formularios_historial is not None and not df_formularios_historial.empty:
+                for _, r in df_formularios_historial.iterrows():
+                    eid_h = int(r.get("id_empresa", 0) or 0)
+                    nid_h = self.normalize_id(r.get("numero_id"))
+                    fecha_h = r.get("fecha_registro")
+                    if eid_h and nid_h and pd.notna(fecha_h):
+                        forms_history_map.setdefault((eid_h, nid_h), []).append(fecha_h)
+                        if len(nid_h) > 5:
+                            forms_history_map.setdefault((eid_h, nid_h[:-1]), []).append(fecha_h)
+            for _k in forms_history_map:
+                forms_history_map[_k] = sorted(forms_history_map[_k])
+
+            def compute_dd_vigencia(eid: int, sid: str, tx_fecha: Any) -> Dict[str, Any]:
+                """Indica si existió un formulario DD vigente en la fecha exacta de la transacción."""
+                candidatos = forms_history_map.get((eid, sid), [])
+                if not candidatos and len(sid) > 5:
+                    candidatos = forms_history_map.get((eid, sid[:-1]), [])
+                if not candidatos:
+                    return {"dd_inicio": None, "dd_fin": None, "dd_vigente_en_fecha_transaccion": False}
+
+                tx_ts = pd.to_datetime(tx_fecha, errors='coerce') if tx_fecha is not None else pd.NaT
+
+                ventana_mas_cercana = None
+                for fecha_reg in candidatos:
+                    inicio = fecha_reg
+                    fin = fecha_reg + pd.Timedelta(days=dias_maximos_dd)
+                    if pd.notna(tx_ts) and inicio <= tx_ts <= fin:
+                        return {
+                            "dd_inicio": inicio.strftime("%Y-%m-%d"),
+                            "dd_fin": fin.strftime("%Y-%m-%d"),
+                            "dd_vigente_en_fecha_transaccion": True
+                        }
+                    if pd.isna(tx_ts) or inicio <= tx_ts:
+                        ventana_mas_cercana = (inicio, fin)
+
+                if ventana_mas_cercana is None:
+                    ventana_mas_cercana = (candidatos[0], candidatos[0] + pd.Timedelta(days=dias_maximos_dd))
+
+                return {
+                    "dd_inicio": ventana_mas_cercana[0].strftime("%Y-%m-%d"),
+                    "dd_fin": ventana_mas_cercana[1].strftime("%Y-%m-%d"),
+                    "dd_vigente_en_fecha_transaccion": False
+                }
+
             missing_tx = []
             total_missing_tx = 0
             limit_missing = 1000000
@@ -450,7 +514,16 @@ class CrucesAnalyticsService:
                     sid = self.normalize_id(r.get(id_col)) if id_col else ""
                     if not eid or not sid: continue
                     key = (eid, sid)
-                    has = key in forms_set or (len(sid) > 5 and (eid, sid[:-1]) in forms_set)
+                    tx_fecha_val = r.get(dcol) if dcol else None
+                    dd_vigencia = compute_dd_vigencia(eid, sid, tx_fecha_val)
+                    has = (
+                        key in forms_set
+                        or (len(sid) > 5 and (eid, sid[:-1]) in forms_set)
+                        # 🟢 Aunque el formulario ya haya expirado HOY (fuera de forms_set),
+                        # si estuvo vigente en la fecha exacta de esta transacción, no se
+                        # considera "sin DD": la debida diligencia sí existía en ese momento.
+                        or dd_vigencia["dd_vigente_en_fecha_transaccion"]
+                    )
                     if not has:
                         total_missing_tx += 1
                         if len(missing_tx) < limit_missing:
@@ -458,12 +531,16 @@ class CrucesAnalyticsService:
                                 "tipo": tipo,
                                 "id_empresa": eid,
                                 "id": sid,
-                                "fecha": r.get(dcol) if dcol else None,
+                                "fecha": tx_fecha_val,
                                 "monto": r.get(acol) if acol else None,
                                 "nombre": pick_val(r, name_opts),
                                 "ubicacion": pick_val(r, loc_opts),
                                 "actividad": pick_val(r, act_opts),  # 🟢 EXTRAEMOS LA ACTIVIDAD
-                                "medio": pick_val(r, medio_opts)  # 🟢 EXTRAEMOS EL MEDIO DE PAGO
+                                "medio": pick_val(r, medio_opts),  # 🟢 EXTRAEMOS EL MEDIO DE PAGO
+                                # 🟢 Vigencia de DD en la fecha real de la transacción
+                                "dd_inicio": dd_vigencia["dd_inicio"],
+                                "dd_fin": dd_vigencia["dd_fin"],
+                                "dd_vigente_en_fecha_transaccion": dd_vigencia["dd_vigente_en_fecha_transaccion"]
                             })
 
             collect(df_clientes, "cliente", id_opts_cli)
@@ -499,7 +576,11 @@ class CrucesAnalyticsService:
                     "fecha": row.get("fecha"),
                     "monto": val,
                     "actividad": row.get("actividad"),
-                    "medio_pago": row.get("medio")
+                    "medio_pago": row.get("medio"),
+                    # 🟢 Vigencia de DD en la fecha real de la transacción
+                    "dd_inicio": row.get("dd_inicio"),
+                    "dd_fin": row.get("dd_fin"),
+                    "dd_vigente_en_fecha_transaccion": row.get("dd_vigente_en_fecha_transaccion", False)
                 }
 
                 if row["tipo"] == "cliente":
@@ -569,6 +650,25 @@ class CrucesAnalyticsService:
                                 e.setdefault("dd", False)
                         else:
                             e.setdefault("dd", False)
+
+                        # 🟢 Anotar, transacción por transacción, si el formulario DD del
+                        # tercero estaba vigente EN LA FECHA de esa transacción puntual
+                        # (independiente de si hoy ya expiró el formulario).
+                        if sid:
+                            for tipo_rel in ("cliente", "proveedor", "empleado"):
+                                rel = e.get(tipo_rel)
+                                if not isinstance(rel, dict):
+                                    continue
+                                detalles_rel = rel.get("transacciones_detalles")
+                                if not isinstance(detalles_rel, list):
+                                    continue
+                                for tx in detalles_rel:
+                                    if not isinstance(tx, dict):
+                                        continue
+                                    dd_vig = compute_dd_vigencia(empresa_id_safe, sid, tx.get("fecha"))
+                                    tx["dd_inicio"] = dd_vig["dd_inicio"]
+                                    tx["dd_fin"] = dd_vig["dd_fin"]
+                                    tx["dd_vigente_en_fecha_transaccion"] = dd_vig["dd_vigente_en_fecha_transaccion"]
                 # Unificar y limpiar dd_ids
                 dd_ids = sorted(list(set(dd_ids)))
             except Exception as _:
