@@ -6,6 +6,7 @@ from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
 from cryptography.fernet import Fernet
 import pandas as pd
+import numpy as np
 
 from src.core.config import settings
 from src.db.repositories.generated_report_repo import GeneratedReportRepository
@@ -85,8 +86,38 @@ class SectorAnalyticsService:
         
         for bad, good in corrections.items():
             text = text.replace(bad, good)
-            
+
         return text
+
+    _ENCODING_CORRECTIONS = {
+        'DISEAAO': 'DISEÑO',
+        'INFORMAATICA': 'INFORMÁTICA',
+        'PERIFAARICOS': 'PERIFÉRICOS',
+        'AGRAACOLA': 'AGRÍCOLA',
+        'ARTAACULOS': 'ARTÍCULOS',
+        'LAAQUIDOS': 'LÍQUIDOS',
+        'VAAAS': 'VÍAS',
+        'SAA3LIDOS': 'SÓLIDOS',
+        'ALCOHAA3LICAS': 'ALCOHÓLICAS',
+        'PAABLICA': 'PÚBLICA',
+        'ELAACTRICA': 'ELÉCTRICA',
+        'METAALICOS': 'METÁLICOS',
+    }
+
+    def fix_encoding_artifacts_series(self, s: pd.Series) -> pd.Series:
+        """
+        Equivalente vectorizado de fix_encoding_artifacts: encadena .str.replace()
+        sobre la columna completa (ejecutado en pandas/C) en vez de invocar la
+        función Python por cada celda vía .apply(). Los valores que no son str
+        (NaN, None, numéricos) se conservan sin cambios, igual que el original.
+        """
+        non_str_mask = s.map(lambda x: not isinstance(x, str))
+        result = s.astype(str)
+        result = result.str.replace('AA3', 'Ó', regex=False)
+        result = result.str.replace('AAA', 'ÍA', regex=False)
+        for bad, good in self._ENCODING_CORRECTIONS.items():
+            result = result.str.replace(bad, good, regex=False)
+        return result.where(~non_str_mask, s)
 
     
     def decrypt_path(self, encrypted_path: str) -> str:
@@ -225,7 +256,7 @@ class SectorAnalyticsService:
             cols_to_clean = ['ciiu_descripcion', 'actividad', 'nombre', 'razon_social', 'nombre_empresa', 'empresa', 'departamento', 'ciudad']
             for col in cols_to_clean:
                 if col in df_empresa.columns:
-                    df_empresa[col] = df_empresa[col].apply(self.fix_encoding_artifacts)
+                    df_empresa[col] = self.fix_encoding_artifacts_series(df_empresa[col])
 
 
             
@@ -295,31 +326,35 @@ class SectorAnalyticsService:
 
             # Limit table to top 100 transactions.
             # Prioritize High Risk transactions, then by amount.
-            def get_risk_rank(row):
-                # Check High Risk factors
-                p_risk = str(row.get('pais_riesgo', '')).upper()
-                j_risk = str(row.get('categoria_jurisdicciones', '')).upper()
-                c_risk = str(row.get('ciiu_categoria', '')).upper()
-                raw_risk = str(row.get('riesgo', '')).upper()
-                
-                if (p_risk in ['ALTO', 'HIGH'] or 
-                    j_risk in ['ALTO', 'HIGH'] or
-                    c_risk in ['ALTO', 'HIGH'] or
-                    'ALTO' in raw_risk or 
-                    'NO COOPERANTE' in p_risk or
-                    raw_risk in ['5', '4']):
-                    return 3
-                
-                if (p_risk in ['MEDIO', 'MEDIUM'] or 
-                    j_risk in ['MEDIO', 'MEDIUM'] or
-                    c_risk in ['MEDIO', 'MEDIUM'] or
-                    'MEDIO' in raw_risk or
-                    raw_risk in ['3']):
-                    return 2
-                
-                return 1
+            # Vectorizado (antes: df_tabla.apply(get_risk_rank, axis=1), que ejecutaba
+            # una función Python fila por fila sobre TODO el dataset solo para luego
+            # cortar a las 100 filas finales).
+            def _col_upper(df_src, col):
+                if col in df_src.columns:
+                    return df_src[col].astype(str).str.upper()
+                return pd.Series('', index=df_src.index)
 
-            df_tabla['risk_rank'] = df_tabla.apply(get_risk_rank, axis=1)
+            p_risk = _col_upper(df_tabla, 'pais_riesgo')
+            j_risk = _col_upper(df_tabla, 'categoria_jurisdicciones')
+            c_risk = _col_upper(df_tabla, 'ciiu_categoria')
+            raw_risk = _col_upper(df_tabla, 'riesgo')
+
+            es_alto = (
+                p_risk.isin(['ALTO', 'HIGH']) |
+                j_risk.isin(['ALTO', 'HIGH']) |
+                c_risk.isin(['ALTO', 'HIGH']) |
+                raw_risk.str.contains('ALTO', na=False) |
+                p_risk.str.contains('NO COOPERANTE', na=False) |
+                raw_risk.isin(['5', '4'])
+            )
+            es_medio = (
+                p_risk.isin(['MEDIO', 'MEDIUM']) |
+                j_risk.isin(['MEDIO', 'MEDIUM']) |
+                c_risk.isin(['MEDIO', 'MEDIUM']) |
+                raw_risk.str.contains('MEDIO', na=False) |
+                raw_risk.isin(['3'])
+            )
+            df_tabla['risk_rank'] = np.where(es_alto, 3, np.where(es_medio, 2, 1))
 
             if 'monto' in df_tabla.columns:
                 df_tabla = df_tabla.sort_values(by=['risk_rank', 'monto'], ascending=[False, False]).head(100)
@@ -439,34 +474,23 @@ class SectorAnalyticsService:
 
             # Calcular Distribución de Riesgo (Bajo, Medio, Alto)
             # Fix: Handle numeric risk scores (5=Alto, 4=Alto, 3=Medio) and other risk columns
-            d_bajo = 0
-            d_medio = 0
-            d_alto = 0
-            
-            for _, row in df_empresa.iterrows():
-                # Check all risk factors to determine the effective risk for this transaction
-                risks = []
-                risks.append(str(row.get('riesgo', '')).upper())
-                risks.append(str(row.get('pais_riesgo', '')).upper())
-                risks.append(str(row.get('categoria_jurisdicciones', '')).upper())
-                risks.append(str(row.get('ciiu_categoria', '')).upper())
-                
-                is_alto = False
-                is_medio = False
-                
-                for r_val in risks:
-                    if 'ALTO' in r_val or 'HIGH' in r_val or r_val in ['5', '4', 'NO COOPERANTE']:
-                        is_alto = True
-                        break # High risk overrides everything
-                    if 'MEDIO' in r_val or 'MEDIUM' in r_val or r_val in ['3']:
-                        is_medio = True
-                
-                if is_alto:
-                    d_alto += 1
-                elif is_medio:
-                    d_medio += 1
-                else:
-                    d_bajo += 1
+            # Vectorized (was a per-row Python loop over df_empresa.iterrows()). Note this uses
+            # exact-match numeric thresholds ('4'/'5'=ALTO, '3'=MEDIO), which differs from the
+            # >=5/>=3 thresholds used in SectorGeoAnalytics — that discrepancy is pre-existing
+            # and preserved as-is, not something this change is meant to reconcile.
+            risk_cols = ['riesgo', 'pais_riesgo', 'categoria_jurisdicciones', 'ciiu_categoria']
+            is_alto = pd.Series(False, index=df_empresa.index)
+            is_medio = pd.Series(False, index=df_empresa.index)
+            for col in risk_cols:
+                if col not in df_empresa.columns:
+                    continue
+                s = df_empresa[col].astype(str).str.upper()
+                is_alto = is_alto | s.str.contains('ALTO', na=False) | s.str.contains('HIGH', na=False) | s.isin(['5', '4', 'NO COOPERANTE'])
+                is_medio = is_medio | s.str.contains('MEDIO', na=False) | s.str.contains('MEDIUM', na=False) | s.isin(['3'])
+
+            d_alto = int(is_alto.sum())
+            d_medio = int((is_medio & ~is_alto).sum())
+            d_bajo = int(len(df_empresa) - d_alto - d_medio)
 
             distribucion_riesgo = {
                 "bajo": int(d_bajo),

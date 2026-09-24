@@ -34,8 +34,9 @@ def generate_pdf(empresa_id, tipo_contraparte):
     print(f"📄 Generando PDF para empresa {empresa_id} ({tipo_contraparte})...")
     db = TargetSessionLocal()
     try:
-        # report_orchestrator.generate_pdf espera: (empresa_id: int, tipo_contraparte: str, db: Session, fecha: str, monto_min: float, output_path: str)
-        result = report_orchestrator.generate_pdf(empresa_id, tipo_contraparte, db, output_path=output_path)
+        result = report_orchestrator.generate_pdf(
+            empresa_id, db, tipo_contraparte=tipo_contraparte, output_path=output_path
+        )
         
         # Verificar el resultado
         pdf_res = result.get("pdf", {})

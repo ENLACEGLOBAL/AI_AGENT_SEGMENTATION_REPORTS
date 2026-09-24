@@ -1,0 +1,2 @@
+Done. Replaced emojis.
+No more non-ASCII chars found in file.

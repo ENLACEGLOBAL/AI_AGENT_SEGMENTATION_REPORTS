@@ -55,9 +55,15 @@ class ReportOrchestrator:
                     if res.data_json and res.data_json != "STORED_IN_DB":
                         analytics_data = json.loads(res.data_json)
                     elif res.json_path:
-                        file_bytes = s3_service.download_file_bytes(res.json_path)
-                        with gzip.GzipFile(fileobj=io.BytesIO(file_bytes), mode='rb') as f:
-                            analytics_data = json.loads(f.read().decode('utf-8'))
+                        try:
+                            file_bytes = s3_service.download_file_bytes(res.json_path)
+                            with gzip.GzipFile(fileobj=io.BytesIO(file_bytes), mode='rb') as f:
+                                analytics_data = json.loads(f.read().decode('utf-8'))
+                        except Exception as e:
+                            # Un registro S3 antiguo o incompleto no debe impedir
+                            # que el endpoint genere una respuesta JSON valida.
+                            print(f"⚠️ Analytics S3 no disponible, regenerando: {e}")
+                            analytics_data = None
 
                     if analytics_data:
                         print(f"♻️ PDF: Reutilizando JSON existente para empresa {empresa_id}")
@@ -79,7 +85,8 @@ class ReportOrchestrator:
                         m_min = float(val_m)  # Lo convertimos a float seguro
 
                 cruces_result = cruces_analytics_service.generate_cruces_analytics(
-                    tgt, empresa_id, fecha=f_desde, monto_min=m_min, validez_dd=validez_dd
+                    tgt, empresa_id, fecha=f_desde, monto_min=m_min, validez_dd=validez_dd,
+                    full_detail=True
                 )
                 if cruces_result.get("status") != "success":
                     return cruces_result
@@ -164,9 +171,13 @@ class ReportOrchestrator:
                     if res.data_json and res.data_json != "STORED_IN_DB":
                         analytics_data = json.loads(res.data_json)
                     elif res.json_path:
-                        file_bytes = s3_service.download_file_bytes(res.json_path)
-                        with gzip.GzipFile(fileobj=io.BytesIO(file_bytes), mode='rb') as f:
-                            analytics_data = json.loads(f.read().decode('utf-8'))
+                        try:
+                            file_bytes = s3_service.download_file_bytes(res.json_path)
+                            with gzip.GzipFile(fileobj=io.BytesIO(file_bytes), mode='rb') as f:
+                                analytics_data = json.loads(f.read().decode('utf-8'))
+                        except Exception as e:
+                            print(f"⚠️ Analytics S3 no disponible, regenerando: {e}")
+                            analytics_data = None
 
                     if analytics_data:
                         print(f"⚡ Dashboard: Reutilizando caché para empresa {empresa_id}")

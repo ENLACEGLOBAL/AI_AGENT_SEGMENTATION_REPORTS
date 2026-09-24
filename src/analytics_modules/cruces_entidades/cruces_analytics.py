@@ -31,8 +31,11 @@ class CrucesAnalytics:
         df = df.copy()
 
         # Helper to find first existing column (case insensitive)
+        # df_cols_lower se calcula una sola vez aquí, en vez de reconstruirse dentro de
+        # get_col en cada una de las ~35 llamadas que se hacen por invocación.
+        df_cols_lower = {str(c).lower(): c for c in df.columns}
+
         def get_col(options):
-            df_cols_lower = {str(c).lower(): c for c in df.columns}
             for col in options:
                 if str(col).lower() in df_cols_lower:
                     return df_cols_lower[str(col).lower()]
@@ -388,15 +391,11 @@ class CrucesAnalytics:
             )
         )
 
-        df['tiene_formulario'] = df.apply(
-            lambda row: (int(row['id_empresa']), str(row['id_contraparte'])) in formularios_set,
-            axis=1
-        )
-
-        df['fecha_formulario'] = df.apply(
-            lambda row: fecha_dict.get((int(row['id_empresa']), str(row['id_contraparte']))),
-            axis=1
-        )
+        # Construir las claves (id_empresa, id_contraparte) una sola vez, en vez de
+        # reconstruirlas dos veces por fila dentro de dos df.apply(axis=1) separados.
+        keys = list(zip(df['id_empresa'].astype(int), df['id_contraparte'].astype(str)))
+        df['tiene_formulario'] = [k in formularios_set for k in keys]
+        df['fecha_formulario'] = [fecha_dict.get(k) for k in keys]
 
         return df
 
@@ -434,7 +433,7 @@ class CrucesAnalytics:
             except:
                 return 0
 
-        for _, row in df.iterrows():
+        for row in df.to_dict('records'):
             r_cliente = parse_r(row.get('Mayor_riesgo_clientes'))
             r_proveedor = parse_r(row.get('Mayor_riesgo_proveedores'))
             r_empleado = parse_r(row.get('Mayor_riesgo_empleados'))
@@ -486,7 +485,7 @@ class CrucesAnalytics:
             except:
                 return 0
 
-        for _, row in self.df_cruces.iterrows():
+        for row in self.df_cruces.to_dict('records'):
             r_cliente = parse_r(row.get('Mayor_riesgo_clientes'))
             r_proveedor = parse_r(row.get('Mayor_riesgo_proveedores'))
             r_empleado = parse_r(row.get('Mayor_riesgo_empleados'))
@@ -512,19 +511,14 @@ class CrucesAnalytics:
             "triple_cruce": 0
         }
 
-        for _, row in self.df_cruces.iterrows():
-            tiene_cliente = row['cantidad_clientes'] > 0
-            tiene_proveedor = row['cantidad_proveedores'] > 0
-            tiene_empleado = row['cantidad_empleados'] > 0
+        tiene_cliente = self.df_cruces['cantidad_clientes'] > 0
+        tiene_proveedor = self.df_cruces['cantidad_proveedores'] > 0
+        tiene_empleado = self.df_cruces['cantidad_empleados'] > 0
 
-            if tiene_cliente and tiene_proveedor and tiene_empleado:
-                tipos['triple_cruce'] += 1
-            elif tiene_cliente and tiene_proveedor:
-                tipos['cliente_proveedor'] += 1
-            elif tiene_proveedor and tiene_empleado:
-                tipos['proveedor_empleado'] += 1
-            elif tiene_cliente and tiene_empleado:
-                tipos['cliente_empleado'] += 1
+        tipos['triple_cruce'] = int((tiene_cliente & tiene_proveedor & tiene_empleado).sum())
+        tipos['cliente_proveedor'] = int((tiene_cliente & tiene_proveedor & ~tiene_empleado).sum())
+        tipos['proveedor_empleado'] = int((tiene_proveedor & tiene_empleado & ~tiene_cliente).sum())
+        tipos['cliente_empleado'] = int((tiene_cliente & tiene_empleado & ~tiene_proveedor).sum())
 
         return tipos
 
@@ -551,7 +545,7 @@ class CrucesAnalytics:
         df_missing = df[~df['tiene_formulario']].copy()
 
         reporte = []
-        for _, row in df_missing.iterrows():
+        for row in df_missing.to_dict('records'):
             nombre_mostrar = f"ID: {row['id_contraparte']}"
             if pd.notna(row.get('nombre_empleado')) and str(row.get('nombre_empleado')) not in ['nan', 'None', '']:
                 nombre_mostrar = str(row.get('nombre_empleado'))
@@ -601,18 +595,132 @@ class CrucesAnalytics:
         if empresa_id is not None:
             df = df[df['id_empresa'] == empresa_id]
 
+        # 🟢 Helper functions defined ONCE outside the loop
+        def parse_risk_val(val):
+            if pd.isna(val): return 0
+            s = str(val).upper()
+            if s in ['ALTO', 'HIGH', 'CRITICO']: return 5
+            if s in ['MEDIO', 'MEDIUM']: return 3
+            if s in ['BAJO', 'LOW']: return 1
+            try:
+                return int(float(val))
+            except:
+                return 0
+
+        def get_risk_props(val):
+            if isinstance(val, (int, float)):
+                if val >= 4: return 'danger', 'Alto'
+                if val >= 3: return 'warning', 'Medio'
+                return 'success', 'Bajo'
+            v_str = str(val).upper()
+            if v_str in ['ALTO', 'HIGH']: return 'danger', 'Alto'
+            if v_str in ['MEDIO', 'MEDIUM']: return 'warning', 'Medio'
+            return 'success', 'Bajo'
+
+        def fmt_money(val):
+            try:
+                return "${:,.0f}".format(float(val))
+            except:
+                return "$0"
+
+        def clean_list(lst):
+            if not isinstance(lst, list): return []
+            return [str(x) if pd.notna(x) and str(x).strip().lower() not in ['nan', 'none', 'nat', 'n/a', 'unknown', ''] else "" for x in lst]
+
+        def clean_payment_list(lst):
+            if not isinstance(lst, list): return []
+            return [str(x) if pd.notna(x) and str(x).strip().lower() not in ['nan', 'none', 'nat', 'n/a', 'unknown', 'desconocido', ''] else "" for x in lst]
+
+        def get_first_risk(lst):
+            if not isinstance(lst, list): return "N/A"
+            for x in lst:
+                s = str(x).strip()
+                if pd.notna(x) and s.lower() not in ['nan', 'none', 'n/a', '']: return s
+            return "N/A"
+
+        def get_first_risk_multi(row_data, list_keys, suffix):
+            if isinstance(list_keys, str): list_keys = [list_keys]
+            for l_key in list_keys:
+                full_key = f"{l_key}_{suffix}"
+                lst = row_data.get(full_key, [])
+                val = get_first_risk(lst)
+                if val != "N/A": return val
+            return "N/A"
+
+        _risk_factors_map = {
+            'pais': ['lista_categoria_riesgo_pais', 'lista_pais'],
+            'ciiu': 'lista_categoria_riesgo_ciiu',
+            'tipo_persona': 'lista_categoria_riesgo_tipo_persona',
+            'montos': 'lista_categoria_riesgo_montos',
+            'medio_pago': 'lista_categoria_riesgo_medio_pago',
+            'valor_10pct': ['lista_categoria_riesgo_valor_mas_10pct', 'lista_val_tx_mas_10_porciento'],
+            'relacion': ['lista_categoria_riesgo_relacion', 'lista_tipo_de_relacion_contratista_proveedor'],
+            'localizacion': ['lista_categoria_riesgo_localizacion', 'lista_localizacion_nacional_internacional'],
+            'jurisdicciones': 'lista_categoria_jurisdicciones',
+            'canal': ['lista_categoria_riesgo_canal_distribucion', 'lista_canal_distribucion'],
+            'medio_venta': 'lista_categoria_riesgo_medio_venta',
+            'sueldo_20pct': ['lista_criterio_sueldo_mas_20pct', 'lista_tx_hist_mas_20pct'],
+            'viaticos': 'lista_criterio_viaticos',
+            'comisiones': 'lista_criterio_comisiones',
+            'bonificaciones': 'lista_criterio_bonificaciones',
+            'otros_pagos': 'lista_criterio_otros_pagos',
+            'incentivos': 'lista_criterio_incentivos',
+            'premios': 'lista_criterio_premios',
+            'prestaciones': 'lista_criterio_prestaciones_sociales',
+            'conteo_alto': ['lista_conteo_alto_extremo', 'lista_conteo_alto'],
+            'puntaje_riesgo': ['lista_puntaje_riesgo_total', 'lista_puntaje_riesgo'],
+            'nivel_riesgo': 'lista_nivel_riesgo'
+        }
+
+        def build_trans_detalles(count, lista_montos, lista_medios, lista_ids, lista_fechas, lista_actividades,
+                                 rf_map, row_data, suffix, is_light=False):
+            details = []
+            for i in range(int(count)):
+                item = {
+                    "monto": lista_montos[i] if i < len(lista_montos) else 0,
+                    "medio": lista_medios[i] if i < len(lista_medios) else "N/A",
+                    "id": lista_ids[i] if i < len(lista_ids) else "N/A",
+                    "fecha": str(lista_fechas[i]) if i < len(lista_fechas) else "N/A",
+                    "actividad": lista_actividades[i] if i < len(lista_actividades) else "N/A",
+                }
+
+                if not is_light:
+                    for key, list_keys in rf_map.items():
+                        if isinstance(list_keys, str): list_keys = [list_keys]
+                        val = "N/A"
+                        for l_key in list_keys:
+                            full_list_key = f"{l_key}_{suffix}"
+                            lst = row_data.get(full_list_key, [])
+                            if i < len(lst) and pd.notna(lst[i]):
+                                val = lst[i]
+                                if str(val).strip().lower() not in ['nan', 'none', 'n/a', '']:
+                                    break
+                        item[key] = str(val) if pd.notna(val) else "N/A"
+                else:
+                    val = "N/A"
+                    posibles_listas = [
+                        f'lista_conteo_alto_{suffix}',
+                        f'lista_conteo_alto_extremo_{suffix}',
+                        f'lista_nivel_riesgo_{suffix}',
+                        f'lista_riesgo_detalle_{suffix}',
+                        f'lista_puntaje_riesgo_total_{suffix}'
+                    ]
+                    for lista_nombre in posibles_listas:
+                        lst = row_data.get(lista_nombre, [])
+                        if i < len(lst) and pd.notna(lst[i]):
+                            check_val = str(lst[i]).strip()
+                            if check_val.lower() not in ['nan', 'none', '', 'n/a']:
+                                val = check_val
+                                break
+                    item['nivel_riesgo'] = val
+                    item['conteo_alto'] = val
+                    item['riesgo_detalle'] = val
+
+                details.append(item)
+            return details
+
         tabla = []
-        for _, row in df.iterrows():
-            def parse_risk_val(val):
-                if pd.isna(val): return 0
-                s = str(val).upper()
-                if s in ['ALTO', 'HIGH', 'CRITICO']: return 5
-                if s in ['MEDIO', 'MEDIUM']: return 3
-                if s in ['BAJO', 'LOW']: return 1
-                try:
-                    return int(float(val))
-                except:
-                    return 0
+        for row in df.to_dict('records'):
 
             r_cliente_raw = row.get('Mayor_riesgo_clientes', 0)
             r_cliente = parse_risk_val(r_cliente_raw)
@@ -622,22 +730,6 @@ class CrucesAnalytics:
 
             r_empleado_raw = row.get('Mayor_riesgo_empleados', 0)
             r_empleado = parse_risk_val(r_empleado_raw)
-
-            def get_risk_props(val):
-                if isinstance(val, (int, float)):
-                    if val >= 4: return 'danger', 'Alto'
-                    if val >= 3: return 'warning', 'Medio'
-                    return 'success', 'Bajo'
-                v_str = str(val).upper()
-                if v_str in ['ALTO', 'HIGH']: return 'danger', 'Alto'
-                if v_str in ['MEDIO', 'MEDIUM']: return 'warning', 'Medio'
-                return 'success', 'Bajo'
-
-            def fmt_money(val):
-                try:
-                    return "${:,.0f}".format(float(val))
-                except:
-                    return "$0"
 
             cant_cli = row.get('cantidad_clientes', 0)
             lista_cli = row.get('lista_clientes')
@@ -657,115 +749,12 @@ class CrucesAnalytics:
             l_act_cli = row.get('lista_actividad_clientes', [])
             if not isinstance(l_act_cli, list): l_act_cli = []
 
-            def clean_list(lst):
-                if not isinstance(lst, list): return []
-                return [str(x) if pd.notna(x) and str(x).strip().lower() not in ['nan', 'none', 'nat', 'n/a', 'unknown',
-                                                                                 ''] else "" for x in lst]
-
-            def clean_payment_list(lst):
-                if not isinstance(lst, list): return []
-                return [str(x) if pd.notna(x) and str(x).strip().lower() not in ['nan', 'none', 'nat', 'n/a', 'unknown',
-                                                                                 'desconocido', ''] else "" for x in
-                        lst]
-
-            risk_factors_map = {
-                'pais': ['lista_categoria_riesgo_pais', 'lista_pais'],
-                'ciiu': 'lista_categoria_riesgo_ciiu',
-                'tipo_persona': 'lista_categoria_riesgo_tipo_persona',
-                'montos': 'lista_categoria_riesgo_montos',
-                'medio_pago': 'lista_categoria_riesgo_medio_pago',
-                'valor_10pct': ['lista_categoria_riesgo_valor_mas_10pct', 'lista_val_tx_mas_10_porciento'],
-                'relacion': ['lista_categoria_riesgo_relacion', 'lista_tipo_de_relacion_contratista_proveedor'],
-                'localizacion': ['lista_categoria_riesgo_localizacion', 'lista_localizacion_nacional_internacional'],
-                'jurisdicciones': 'lista_categoria_jurisdicciones',
-                'canal': ['lista_categoria_riesgo_canal_distribucion', 'lista_canal_distribucion'],
-                'medio_venta': 'lista_categoria_riesgo_medio_venta',
-                'sueldo_20pct': ['lista_criterio_sueldo_mas_20pct', 'lista_tx_hist_mas_20pct'],
-                'viaticos': 'lista_criterio_viaticos',
-                'comisiones': 'lista_criterio_comisiones',
-                'bonificaciones': 'lista_criterio_bonificaciones',
-                'otros_pagos': 'lista_criterio_otros_pagos',
-                'incentivos': 'lista_criterio_incentivos',
-                'premios': 'lista_criterio_premios',
-                'prestaciones': 'lista_criterio_prestaciones_sociales',
-                'conteo_alto': ['lista_conteo_alto_extremo', 'lista_conteo_alto'],
-                'puntaje_riesgo': ['lista_puntaje_riesgo_total', 'lista_puntaje_riesgo'],
-                'nivel_riesgo': 'lista_nivel_riesgo'
-            }
-
-            def build_trans_detalles(count, lista_montos, lista_medios, lista_ids, lista_fechas, lista_actividades,
-                                     rf_map, row, suffix, is_light=False):
-                details = []
-                for i in range(int(count)):
-                    item = {
-                        "monto": lista_montos[i] if i < len(lista_montos) else 0,
-                        "medio": lista_medios[i] if i < len(lista_medios) else "N/A",
-                        "id": lista_ids[i] if i < len(lista_ids) else "N/A",
-                        "fecha": str(lista_fechas[i]) if i < len(lista_fechas) else "N/A",
-                        "actividad": lista_actividades[i] if i < len(lista_actividades) else "N/A",
-                    }
-
-                    if not is_light:
-                        for key, list_keys in rf_map.items():
-                            if isinstance(list_keys, str): list_keys = [list_keys]
-                            val = "N/A"
-                            for l_key in list_keys:
-                                full_list_key = f"{l_key}_{suffix}"
-                                lst = row.get(full_list_key, [])
-                                if i < len(lst) and pd.notna(lst[i]):
-                                    val = lst[i]
-                                    if str(val).strip().lower() not in ['nan', 'none', 'n/a', '']:
-                                        break
-                            item[key] = str(val) if pd.notna(val) else "N/A"
-                    else:
-                        # 🟢 MODO LIGERO CORREGIDO PARA EXTRAER TODOS LOS RIESGOS INCLUYENDO EMPLEADOS
-                        val = "N/A"
-                        posibles_listas = [
-                            f'lista_conteo_alto_{suffix}',
-                            f'lista_conteo_alto_extremo_{suffix}',
-                            f'lista_nivel_riesgo_{suffix}',
-                            f'lista_riesgo_detalle_{suffix}',
-                            f'lista_puntaje_riesgo_total_{suffix}'
-                        ]
-
-                        for lista_nombre in posibles_listas:
-                            lst = row.get(lista_nombre, [])
-                            if i < len(lst) and pd.notna(lst[i]):
-                                check_val = str(lst[i]).strip()
-                                if check_val.lower() not in ['nan', 'none', '', 'n/a']:
-                                    val = check_val
-                                    break
-
-                        item['nivel_riesgo'] = val
-                        item['conteo_alto'] = val  # Lo inyectamos explícito
-                        item['riesgo_detalle'] = val  # Y este también
-
-                    details.append(item)
-                return details
-
-            def get_first_risk(lst):
-                if not isinstance(lst, list): return "N/A"
-                for x in lst:
-                    s = str(x).strip()
-                    if pd.notna(x) and s.lower() not in ['nan', 'none', 'n/a', '']: return s
-                return "N/A"
-
-            def get_first_risk_multi(row, list_keys, suffix):
-                if isinstance(list_keys, str): list_keys = [list_keys]
-                for l_key in list_keys:
-                    full_key = f"{l_key}_{suffix}"
-                    lst = row.get(full_key, [])
-                    val = get_first_risk(lst)
-                    if val != "N/A": return val
-                return "N/A"
-
-            cliente_risk_factors = {k: get_first_risk_multi(row, v, "clientes") for k, v in risk_factors_map.items()}
-            proveedor_risk_factors = {k: get_first_risk_multi(row, v, "proveedores") for k, v in
-                                      risk_factors_map.items()}
-            empleado_risk_factors = {k: get_first_risk_multi(row, v, "empleados") for k, v in risk_factors_map.items()}
+            cliente_risk_factors = {k: get_first_risk_multi(row, v, "clientes") for k, v in _risk_factors_map.items()}
+            proveedor_risk_factors = {k: get_first_risk_multi(row, v, "proveedores") for k, v in _risk_factors_map.items()}
+            empleado_risk_factors = {k: get_first_risk_multi(row, v, "empleados") for k, v in _risk_factors_map.items()}
 
             consolidated_rf = {}
-            for k in risk_factors_map.keys():
+            for k in _risk_factors_map.keys():
                 val = "N/A"
                 for rf_dict in [cliente_risk_factors, proveedor_risk_factors, empleado_risk_factors]:
                     if rf_dict[k] != "N/A":
@@ -783,7 +772,7 @@ class CrucesAnalytics:
                 "riesgo": r_cliente,
                 "transacciones": [float(x) for x in lista_cli if pd.notna(x)],
                 "transacciones_detalles": build_trans_detalles(cant_cli, lista_cli, l_mp_cli, l_ids_cli, l_dates_cli,
-                                                               l_act_cli, risk_factors_map, row, "clientes",
+                                                               l_act_cli, _risk_factors_map, row, "clientes",
                                                                usar_universo),
                 "medios_pago": clean_payment_list(l_mp_cli),
                 "riesgos_detalle": clean_list(l_rd_cli),
@@ -820,7 +809,7 @@ class CrucesAnalytics:
                     row.get('lista_proveedores') if isinstance(row.get('lista_proveedores'), list) else []) if
                                   pd.notna(x)],
                 "transacciones_detalles": build_trans_detalles(cant_prov, row.get('lista_proveedores', []), l_mp_pro,
-                                                               l_ids_pro, l_dates_pro, l_act_pro, risk_factors_map, row,
+                                                               l_ids_pro, l_dates_pro, l_act_pro, _risk_factors_map, row,
                                                                "proveedores", usar_universo),
                 "medios_pago": clean_payment_list(l_mp_pro),
                 "riesgos_detalle": clean_list(l_rd_pro),
@@ -855,13 +844,13 @@ class CrucesAnalytics:
                     return str(val)
                 return "N/A"
 
-            empleado_risk_factors = {k: get_first_risk_multi(row, v, "empleados") for k, v in risk_factors_map.items()}
+            empleado_risk_factors = {k: get_first_risk_multi(row, v, "empleados") for k, v in _risk_factors_map.items()}
             emp_specific_keys = ['sueldo_20pct', 'viaticos', 'comisiones', 'bonificaciones', 'otros_pagos',
                                  'incentivos', 'premios', 'prestaciones']
             for k in emp_specific_keys:
                 if empleado_risk_factors.get(k) == "N/A":
                     empleado_risk_factors[k] = get_emp_rf(
-                        risk_factors_map[k][0] if isinstance(risk_factors_map[k], list) else risk_factors_map[k])
+                        _risk_factors_map[k][0] if isinstance(_risk_factors_map[k], list) else _risk_factors_map[k])
 
             lista_emp_raw = row.get('lista_empleados')
             lista_emp = lista_emp_raw if isinstance(lista_emp_raw, list) else []
@@ -876,7 +865,7 @@ class CrucesAnalytics:
                 "riesgo": r_empleado,
                 "transacciones": [float(x) for x in lista_emp if pd.notna(x)],
                 "transacciones_detalles": build_trans_detalles(cant_emp, lista_emp, l_mp_emp, l_ids_emp, l_dates_emp,
-                                                               l_act_emp, risk_factors_map, row, "empleados",
+                                                               l_act_emp, _risk_factors_map, row, "empleados",
                                                                usar_universo),
                 "medios_pago": clean_payment_list(l_mp_emp),
                 "riesgos_detalle": clean_list(l_rd_emp),
@@ -924,18 +913,20 @@ class CrucesAnalytics:
         if empresa_id is not None:
             df = df[df['id_empresa'] == empresa_id]
 
+        # Definida una sola vez fuera del loop (antes se redefinía en cada iteración)
+        def parse_risk_val(val):
+            if pd.isna(val): return 0
+            s = str(val).upper()
+            if s in ['ALTO', 'HIGH', 'CRITICO']: return 5
+            if s in ['MEDIO', 'MEDIUM']: return 3
+            if s in ['BAJO', 'LOW']: return 1
+            try:
+                return int(float(val))
+            except:
+                return 0
+
         tabla = []
-        for _, row in df.iterrows():
-            def parse_risk_val(val):
-                if pd.isna(val): return 0
-                s = str(val).upper()
-                if s in ['ALTO', 'HIGH', 'CRITICO']: return 5
-                if s in ['MEDIO', 'MEDIUM']: return 3
-                if s in ['BAJO', 'LOW']: return 1
-                try:
-                    return int(float(val))
-                except:
-                    return 0
+        for row in df.to_dict('records'):
 
             r_cliente = parse_risk_val(row.get('Mayor_riesgo_clientes', 0))
             r_proveedor = parse_risk_val(row.get('Mayor_riesgo_proveedores', 0))
@@ -984,7 +975,7 @@ class CrucesAnalytics:
         sin_formulario = total - con_formulario
 
         alto_riesgo_sin_form = 0
-        for _, row in df[~df['tiene_formulario']].iterrows():
+        for row in df[~df['tiene_formulario']].to_dict('records'):
             r_cliente = row.get('Mayor_riesgo_clientes', 0)
             r_proveedor = row.get('Mayor_riesgo_proveedores', 0)
             r_emp_raw = str(row.get('Mayor_riesgo_empleados', '')).upper()

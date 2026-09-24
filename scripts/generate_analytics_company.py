@@ -1,7 +1,13 @@
 import argparse
 import json
 import os
+import sys
 from datetime import datetime
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from src.db.base import SourceSessionLocal
 from src.services.cruces_analytics_service import cruces_analytics_service
@@ -12,6 +18,7 @@ def main():
     parser.add_argument("--empresa", type=int, required=True, help="ID de empresa")
     parser.add_argument("--fecha", type=str, default=None, help="Fecha específica (YYYY-MM-DD)")
     parser.add_argument("--monto-min", type=float, default=None, help="Monto mínimo para filtrar transacciones")
+    parser.add_argument("--validez-dd", type=int, default=0, help="Vigencia DD: 0=sin límite, 1=365 días, 2=730 días")
     parser.add_argument("--out", type=str, default=None, help="Ruta de salida del JSON")
     parser.add_argument("--full", action="store_true", help="Desactivar compactación del JSON")
     parser.add_argument("--universo", action="store_true", help="Usar universo completo (sin filtro de cruces)")
@@ -34,7 +41,8 @@ def main():
     db = SourceSessionLocal()
     try:
         res = cruces_analytics_service.generate_cruces_analytics(
-            db, empresa_id=args.empresa, fecha=args.fecha, monto_min=args.monto_min
+            db, empresa_id=args.empresa, fecha=args.fecha, monto_min=args.monto_min,
+            validez_dd=args.validez_dd
         )
     finally:
         db.close()

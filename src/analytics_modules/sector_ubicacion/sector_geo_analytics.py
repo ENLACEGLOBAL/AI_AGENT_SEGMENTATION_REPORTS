@@ -2,6 +2,36 @@
 import pandas as pd
 from typing import Dict, Any, List
 
+RISK_COLUMNS = ['riesgo', 'pais_riesgo', 'categoria_jurisdicciones', 'ciiu_categoria']
+
+
+def classify_alto_medio(df: pd.DataFrame, cols: List[str] = RISK_COLUMNS) -> tuple:
+    """
+    Vectorized equivalent of the per-row scan (was a Python loop over df.iterrows()):
+    for each of `cols`, ALTO if text contains ALTO/HIGH/NO COOPERANTE or numeric >= 5;
+    MEDIO if text contains MEDIO/MEDIUM or 3 <= numeric < 5. A row is ALTO/MEDIO if ANY
+    column matches (same as the original's "any column" semantics; the original's
+    break-on-ALTO only skipped redundant work, it never changed the final bucket since
+    ALTO always outranks MEDIO regardless of which column triggered it).
+    Returns (is_alto, is_medio) boolean Series aligned to df.index.
+    """
+    is_alto = pd.Series(False, index=df.index)
+    is_medio = pd.Series(False, index=df.index)
+    for col in cols:
+        if col not in df.columns:
+            continue
+        s = df[col].astype(str).str.upper()
+        text_alto = s.str.contains('ALTO', na=False) | s.str.contains('HIGH', na=False) | s.str.contains('NO COOPERANTE', na=False)
+        text_medio = s.str.contains('MEDIO', na=False) | s.str.contains('MEDIUM', na=False)
+        is_digit = s.str.isdigit()
+        numeric = pd.to_numeric(s.where(is_digit), errors='coerce')
+        num_alto = is_digit & (numeric >= 5)
+        num_medio = is_digit & (numeric >= 3) & (numeric < 5)
+        is_alto = is_alto | text_alto | num_alto
+        is_medio = is_medio | text_medio | num_medio
+    return is_alto, is_medio
+
+
 class SectorGeoAnalytics:
 
     def __init__(self, df_transacciones: pd.DataFrame, df_fatf: pd.DataFrame):
@@ -15,33 +45,13 @@ class SectorGeoAnalytics:
         """Calculate KPIs from transaction data."""
         # Process ALL transactions, not just high risk ones
         df_alto = self.df
-        
+
         # Calculate alto_riesgo count based on multiple factors (same logic as map/distribution)
         alto_riesgo_count = 0
-        
+
         if not df_alto.empty:
-            for _, row in df_alto.iterrows():
-                # Check all risk factors
-                riesgo = str(row.get('riesgo', '')).upper()
-                pais_riesgo = str(row.get('pais_riesgo', '')).upper()
-                cat_jur = str(row.get('categoria_jurisdicciones', '')).upper()
-                act_riesgo = str(row.get('ciiu_categoria', '')).upper()
-                
-                is_alto = False
-                all_risks = [riesgo, pais_riesgo, cat_jur, act_riesgo]
-                
-                for r_val in all_risks:
-                    if 'ALTO' in r_val or 'HIGH' in r_val or 'NO COOPERANTE' in r_val:
-                        is_alto = True
-                        break
-                    elif r_val.isdigit():
-                         try:
-                             val = int(r_val)
-                             if val >= 5: is_alto = True
-                         except: pass
-                
-                if is_alto:
-                    alto_riesgo_count += 1
+            is_alto, _ = classify_alto_medio(df_alto)
+            alto_riesgo_count = int(is_alto.sum())
 
         return {
             "total_transacciones": len(df_alto),
@@ -82,42 +92,18 @@ class SectorGeoAnalytics:
             
         # Dictionary to aggregate data by location: (lat, lon) -> data
         aggregated_data = {}
-        
+
+        # Classification vectorized once over the whole DataFrame (was a per-row string
+        # rescan inside the loop below); the aggregation itself still needs to walk rows.
+        is_alto_col, is_medio_col = classify_alto_medio(df_all_transactions)
+        is_valid_col = is_alto_col | is_medio_col
+
         # Filter for risks only
-        for _, row in df_all_transactions.iterrows():
-            # Check all risk factors
-            riesgo = str(row.get('riesgo', '')).upper()
-            pais_riesgo = str(row.get('pais_riesgo', '')).upper()
-            cat_jur = str(row.get('categoria_jurisdicciones', '')).upper()
-            act_riesgo = str(row.get('ciiu_categoria', '')).upper()
-            
-            # Aggregate all risks to check validity
-            all_risks = [riesgo, pais_riesgo, cat_jur, act_riesgo]
-            
-            is_valid_risk = False
-            is_alto = False
-            is_medio = False
-            
-            for r_val in all_risks:
-                if 'ALTO' in r_val or 'HIGH' in r_val or 'NO COOPERANTE' in r_val:
-                    is_valid_risk = True
-                    is_alto = True
-                    break # Optimization: If Alto found, we know it's valid and Alto
-                elif 'MEDIO' in r_val or 'MEDIUM' in r_val:
-                    is_valid_risk = True
-                    is_medio = True
-                elif r_val.isdigit():
-                    try:
-                        val = int(r_val)
-                        if val >= 5: # 5=Alto
-                             is_valid_risk = True
-                             is_alto = True
-                        elif val >= 3: # 3=Medio
-                             is_valid_risk = True
-                             is_medio = True
-                    except:
-                        pass
-            
+        for row, is_alto, is_medio, is_valid_risk in zip(
+            df_all_transactions.itertuples(index=False),
+            is_alto_col, is_medio_col, is_valid_col
+        ):
+            row = row._asdict()
             if not is_valid_risk:
                 continue
 

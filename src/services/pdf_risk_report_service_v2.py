@@ -674,12 +674,15 @@ class PDFRiskReportService:
                 url = url.replace("mysql://", "mysql+pymysql://")
 
             engine = create_engine(url, pool_pre_ping=True)
-            with engine.connect() as conn:
-                query = text("SELECT razon_social FROM empresas WHERE id_empresa = :eid LIMIT 1")
-                result = conn.execute(query, {"eid": empresa_id}).fetchone()
+            try:
+                with engine.connect() as conn:
+                    query = text("SELECT razon_social FROM empresas WHERE id_empresa = :eid LIMIT 1")
+                    result = conn.execute(query, {"eid": empresa_id}).fetchone()
 
-                if result and result[0]:
-                    return str(result[0]).strip().upper()
+                    if result and result[0]:
+                        return str(result[0]).strip().upper()
+            finally:
+                engine.dispose()
         except Exception as e:
             print(f"⚠️ Error obteniendo razón social de BD formularios: {e}")
 

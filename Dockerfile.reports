@@ -1,17 +1,32 @@
+# syntax=docker/dockerfile:1.7
+
+# ---- Stage 1: build wheels (compilers stay here, never reach the final image) ----
+FROM python:3.11-slim AS builder
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libfreetype6-dev \
+    libpng-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt /app/
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --prefix=/install -r requirements.txt
+
+# ---- Stage 2: runtime image (only interpreted libs + installed packages) ----
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Instalar dependencias del sistema para ReportLab y otras librerías
+# Runtime-only shared libs for ReportLab/Matplotlib (no -dev headers, no compiler)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
     libfreetype6 \
     libpng16-16 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt /app/
-RUN pip install --no-cache-dir -r requirements.txt
-
+COPY --from=builder /install /usr/local
 COPY . /app
 
 ENV PYTHONUNBUFFERED=1 \
